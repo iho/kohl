@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = [
+    "primitives/ringct-primitives",
+    "primitives/ringct-crypto",
+    "pallets/ringct",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["kohl developers"]
+repository = "https://github.com/kohl-chain/kohl"
+
+[workspace.dependencies]
+codec = { package = "parity-scale-codec", version = "3.7", default-features = false, features = ["derive", "max-encoded-len"] }
+scale-info = { version = "2.11", default-features = false, features = ["derive"] }
+
+# Polkadot SDK — every crate pinned to the same stable tag (see BLUEPRINT.md §2.1)
+frame-support = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+frame-system = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-core = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-io = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-inherents = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-runtime-interface = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+
+# Local crates
+ringct-primitives = { path = "primitives/ringct-primitives", default-features = false }
+ringct-crypto = { path = "primitives/ringct-crypto", default-features = false }
+pallet-ringct = { path = "pallets/ringct", default-features = false }
+
+[profile.release]
+panic = "unwind"

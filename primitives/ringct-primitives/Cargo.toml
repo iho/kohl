@@ -1,0 +1,13 @@
+[package]
+name = "ringct-primitives"
+description = "Consensus constants and emission schedule for the kohl chain"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[features]
+default = ["std"]
+std = []

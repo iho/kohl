@@ -1,0 +1,29 @@
+[package]
+name = "ringct-crypto"
+description = "Confidential-transaction cryptography for the kohl chain: Pedersen commitments, Bulletproofs, and the runtime host-function boundary"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(substrate_runtime)"] }
+
+[dependencies]
+sp-runtime-interface = { workspace = true }
+
+# Native-only (host/prover side). Never compiled into the WASM runtime.
+bulletproofs = { version = "5", optional = true }
+curve25519-dalek = { version = "4", features = ["rand_core"], optional = true }
+merlin = { version = "3", optional = true }
+rand = { version = "0.8", optional = true }
+
+[features]
+default = ["std"]
+std = [
+    "sp-runtime-interface/std",
+    "dep:bulletproofs",
+    "dep:curve25519-dalek",
+    "dep:merlin",
+    "dep:rand",
+]
