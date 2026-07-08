@@ -10,23 +10,29 @@
 //! serialization at this boundary. Functions are versioned (`*_v1`) so old
 //! blocks stay re-executable if rules evolve.
 //!
-//! ## Commitment convention
+//! ## Commitment convention (Monero's)
 //!
-//! We use the `bulletproofs` crate's `PedersenGens`: a commitment to amount
-//! `a` with blinding `x` is `C = a·B + x·B̃`, where `B` is the Ristretto
-//! basepoint (value generator) and `B̃ = hash(B)` is the blinding generator
-//! (NUMS, so nobody knows `log_B(B̃)` — forging amounts would require it).
-//! The transparent fee enters the balance equation as `fee·B`:
+//! A commitment to amount `a` with blinding `x` is `C = a·H + x·G`, where
+//! `G` is the Ristretto basepoint and `H` is a NUMS hash-to-point (nobody
+//! knows `log_G(H)`, or amounts could be forged). The blinding lives on the
+//! *basepoint* so that CLSAG's commitment relation `C_real − C_pseudo = z·G`
+//! shares its generator with the one-time keys `P = x·G` — exactly Monero.
+//! The transparent fee enters the balance equation as `fee·H`:
 //!
 //! ```text
-//! Σ C_inputs == Σ C_outputs + fee·B
+//! Σ C_pseudo_inputs == Σ C_outputs + fee·H
 //! ```
 //!
-//! which holds iff amounts balance **and** the wallet chose blindings with
-//! `Σ x_in == Σ x_out`. Range proofs over every output commitment prevent
+//! which holds iff amounts balance **and** blindings balance
+//! (`Σ x_in == Σ x_out`). Range proofs over every output commitment prevent
 //! negative-amount / overflow minting.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(feature = "std")]
+pub mod clsag;
+#[cfg(feature = "std")]
+pub mod stealth;
 
 /// Bit width of every range proof: amounts are proven to lie in [0, 2^64).
 pub const RANGE_PROOF_BITS: usize = 64;
@@ -34,7 +40,7 @@ pub const RANGE_PROOF_BITS: usize = 64;
 /// Maximum commitments covered by one aggregated proof (== MAX_OUTPUTS).
 /// The verifier pads to the next power of two with identity commitments
 /// (= commitment to value 0 with blinding 0), mirroring the prover.
-pub const MAX_AGGREGATED: usize = 8;
+pub const MAX_AGGREGATED: usize = ringct_primitives::MAX_OUTPUTS as usize;
 
 /// Merlin transcript domain label. Consensus-critical; version with care.
 pub const TRANSCRIPT_LABEL: &[u8] = b"kohl/rangeproof/v1";
@@ -44,16 +50,23 @@ pub mod native {
     use super::*;
     use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
     use curve25519_dalek::{
+        constants::RISTRETTO_BASEPOINT_POINT,
         ristretto::{CompressedRistretto, RistrettoPoint},
         scalar::Scalar,
         traits::Identity,
     };
     use merlin::Transcript;
+    use sha2::Sha512;
     use std::sync::OnceLock;
 
-    fn pc_gens() -> &'static PedersenGens {
+    /// Monero-convention generators (see crate docs): value on the NUMS
+    /// point `H`, blinding on the Ristretto basepoint `G`.
+    pub(crate) fn pc_gens() -> &'static PedersenGens {
         static GENS: OnceLock<PedersenGens> = OnceLock::new();
-        GENS.get_or_init(PedersenGens::default)
+        GENS.get_or_init(|| PedersenGens {
+            B: RistrettoPoint::hash_from_bytes::<Sha512>(b"kohl/pedersen/value-generator/v1"),
+            B_blinding: RISTRETTO_BASEPOINT_POINT,
+        })
     }
 
     fn bp_gens() -> &'static BulletproofGens {
@@ -138,6 +151,12 @@ pub mod native {
         Scalar::random(&mut rand::rngs::OsRng).to_bytes()
     }
 
+    /// A random one-time keypair `(x, P = x·G)` (tests and wallets).
+    pub fn random_secret_key() -> ([u8; 32], [u8; 32]) {
+        let x = Scalar::random(&mut rand::rngs::OsRng);
+        (x.to_bytes(), (RISTRETTO_BASEPOINT_POINT * x).compress().to_bytes())
+    }
+
     /// The blinding that balances a transaction:
     /// `Σ input_blindings − Σ other_output_blindings` (fee has no blinding).
     pub fn balancing_blinding(
@@ -216,6 +235,18 @@ pub trait RingctCrypto {
     /// Commitment to a public amount with zero blinding (coinbase).
     fn value_commitment_v1(amount: u64) -> AllocateAndReturnPointer<[u8; 32], 32> {
         native::value_commitment(amount)
+    }
+
+    /// CLSAG over a ring blob of `n × 64` bytes (`P_i ‖ C_i` pairs); see
+    /// `clsag` module docs for the exact byte formats.
+    fn verify_clsag_v1(
+        msg: PassFatPointerAndRead<&[u8]>,
+        ring: PassFatPointerAndRead<&[u8]>,
+        pseudo_commitment: PassFatPointerAndRead<&[u8]>,
+        key_image: PassFatPointerAndRead<&[u8]>,
+        signature: PassFatPointerAndRead<&[u8]>,
+    ) -> bool {
+        clsag::verify(msg, ring, pseudo_commitment, key_image, signature)
     }
 }
 

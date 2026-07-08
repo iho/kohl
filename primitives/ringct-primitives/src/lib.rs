@@ -27,6 +27,14 @@ pub const MAX_INPUTS: u32 = 8;
 /// Maximum outputs per transfer (and per coinbase).
 pub const MAX_OUTPUTS: u32 = 8;
 
+/// Maximum ring size the type system admits. The *required* ring size is a
+/// runtime `Config` constant (16 on the production chain) and must be ≤ this.
+pub const MAX_RING_SIZE: u32 = 16;
+
+/// Maximum encoded size of a CLSAG signature:
+/// c0 (32) + one scalar per ring member (32·n) + auxiliary key image D (32).
+pub const CLSAG_MAX_BYTES: u32 = 32 * (MAX_RING_SIZE + 2);
+
 /// Maximum encoded size of an aggregated range proof.
 /// An n=64-bit proof aggregating m parties is (9 + 2·log2(64·m))·32 bytes;
 /// for m = 8 that is 864 bytes.

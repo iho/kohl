@@ -2013,7 +2013,6 @@ dependencies = [
  "ringct-crypto",
  "ringct-primitives",
  "scale-info",
- "sp-core",
  "sp-inherents",
  "sp-io",
  "sp-runtime",
@@ -2423,6 +2422,8 @@ dependencies = [
  "curve25519-dalek",
  "merlin",
  "rand",
+ "ringct-primitives",
+ "sha2 0.10.9",
  "sp-runtime-interface",
 ]
 

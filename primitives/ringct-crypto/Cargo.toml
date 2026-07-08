@@ -11,19 +11,23 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(substrate_runtime)"] }
 
 [dependencies]
 sp-runtime-interface = { workspace = true }
+ringct-primitives = { workspace = true }
 
 # Native-only (host/prover side). Never compiled into the WASM runtime.
 bulletproofs = { version = "5", optional = true }
-curve25519-dalek = { version = "4", features = ["rand_core"], optional = true }
+curve25519-dalek = { version = "4", features = ["rand_core", "digest"], optional = true }
 merlin = { version = "3", optional = true }
 rand = { version = "0.8", optional = true }
+sha2 = { version = "0.10", optional = true }
 
 [features]
 default = ["std"]
 std = [
     "sp-runtime-interface/std",
+    "ringct-primitives/std",
     "dep:bulletproofs",
     "dep:curve25519-dalek",
     "dep:merlin",
     "dep:rand",
+    "dep:sha2",
 ]

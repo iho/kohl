@@ -1,16 +1,24 @@
 //! # pallet-ringct — the kohl monetary system
 //!
-//! **Phase 2 (current): confidential amounts.** Outputs carry Pedersen
-//! commitments instead of plaintext amounts; every transfer proves the
-//! balance equation `Σ C_in == Σ C_out + fee·B` and carries one aggregated
-//! Bulletproof showing every output amount lies in [0, 2^64). The fee is the
-//! single public amount (Monero-style). Ownership is still a plain sr25519
-//! signature per input; Phase 3 replaces it with CLSAG rings + key images
-//! and adds stealth addresses (see BLUEPRINT.md §6).
+//! **Phase 3 (current): full RingCT.** All three Monero privacy pillars are
+//! active (BLUEPRINT.md §1.3):
 //!
-//! Heavy verification runs natively through the versioned host functions in
-//! `ringct-crypto` (BLUEPRINT.md §1.6); the runtime never executes curve
-//! arithmetic in WASM.
+//! 1. **Sender anonymity** — every input is a ring of `T::RingSize` outputs
+//!    (decoys + 1 real) proven by a CLSAG; the chain learns only the ring.
+//! 2. **Receiver privacy** — outputs are one-time stealth keys with view
+//!    tags; addresses never appear on chain (derivation is wallet-side, see
+//!    `ringct_crypto::stealth`).
+//! 3. **Amount confidentiality** — Pedersen commitments + one aggregated
+//!    Bulletproof per tx; per-input *pseudo-output commitments* re-blind the
+//!    real input amounts so the balance equation
+//!    `Σ C_pseudo == Σ C_out + fee·H` verifies without linking ring members.
+//!
+//! Double spends are prevented by **key images** (`I = x·Hp(P)`): stored
+//! forever, deterministic per output, revealing nothing about which ring
+//! member was spent. Transfers are unsigned self-authenticating extrinsics;
+//! the fee is the single public amount and goes to the block author via the
+//! coinbase inherent. Heavy verification (CLSAG, Bulletproofs, balance) runs
+//! natively through versioned host functions (BLUEPRINT.md §1.6).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -21,7 +29,8 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::{pallet_prelude::*, BoundedVec};
 use frame_system::pallet_prelude::*;
 use ringct_primitives::{
-    block_reward, MAX_INPUTS, MAX_OUTPUTS, MAX_PAYLOAD_BYTES, MAX_RANGE_PROOF_BYTES,
+    block_reward, CLSAG_MAX_BYTES, MAX_INPUTS, MAX_OUTPUTS, MAX_PAYLOAD_BYTES,
+    MAX_RANGE_PROOF_BYTES, MAX_RING_SIZE,
 };
 use scale_info::TypeInfo;
 use sp_runtime::transaction_validity::{
@@ -37,13 +46,13 @@ mod tests;
 
 /// Domain-separation prefix for the transfer signing hash. Versioned:
 /// changing tx semantics MUST change this string (consensus-critical).
-pub const SIGNING_DOMAIN: [u8; 16] = *b"kohl/transfer/v2";
+pub const SIGNING_DOMAIN: [u8; 16] = *b"kohl/transfer/v3";
 
 /// Inherent identifier for the coinbase call.
 pub const INHERENT_IDENTIFIER: sp_inherents::InherentIdentifier = *b"ringct0b";
 
-/// Opaque per-output wallet payload (encrypted amount + blinding for the
-/// receiver; format finalized with stealth-address ECDH in Phase 3).
+/// Opaque per-output wallet payload. Convention: the 8-byte masked amount
+/// (`stealth::mask_amount`); the blinding is derived from the shared secret.
 pub type Payload = BoundedVec<u8, ConstU32<MAX_PAYLOAD_BYTES>>;
 
 /// A newly created confidential output as it appears inside a transaction.
@@ -51,23 +60,25 @@ pub type Payload = BoundedVec<u8, ConstU32<MAX_PAYLOAD_BYTES>>;
     Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
 pub struct Output {
-    /// sr25519 public key allowed to spend this output.
-    /// (Phase 3: becomes a one-time stealth key.)
-    pub owner: [u8; 32],
-    /// Pedersen commitment to the amount (compressed Ristretto point).
+    /// One-time stealth key `P = Hs(rA‖i)·G + B` (compressed Ristretto).
+    pub one_time_key: [u8; 32],
+    /// Pedersen commitment to the amount.
     pub commitment: [u8; 32],
-    /// Opaque payload for the receiver's wallet.
+    /// 1-byte scan hint: wallets skip ~255/256 outputs with one hash.
+    pub view_tag: u8,
+    /// Opaque payload for the receiver's wallet (masked amount).
     pub payload: Payload,
 }
 
 /// A coinbase output: amount is public (as in Monero); the chain derives its
-/// commitment as `amount·B` (zero blinding), so it participates in later
+/// commitment as `amount·H` (zero blinding), so it participates in later
 /// confidential balance equations like any other output.
 #[derive(
     Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
 pub struct CoinbaseOutput {
-    pub owner: [u8; 32],
+    /// One-time key of the miner (stealth-derived like any output).
+    pub one_time_key: [u8; 32],
     pub amount: u64,
 }
 
@@ -76,8 +87,12 @@ pub struct CoinbaseOutput {
     Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
 pub struct StoredOutput<BlockNumber> {
-    pub owner: [u8; 32],
+    pub one_time_key: [u8; 32],
     pub commitment: [u8; 32],
+    /// The transaction pubkey `R = r·G` this output was created under —
+    /// wallets need it to scan.
+    pub tx_pubkey: [u8; 32],
+    pub view_tag: u8,
     /// Public amount — `Some` only for coinbase outputs.
     pub amount: Option<u64>,
     /// Block in which the output was created (maturity rules).
@@ -86,34 +101,40 @@ pub struct StoredOutput<BlockNumber> {
     pub coinbase: bool,
 }
 
-/// One spend inside a transfer.
-///
-/// Phase 2: a direct reference to the spent output plus the owner's
-/// signature. Phase 3 replaces this with a ring of decoy indices, a key
-/// image, a pseudo-output commitment and a CLSAG.
+/// One ring spend inside a transfer.
 #[derive(
     Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
-pub struct Input {
-    /// Global index of the output being spent.
-    pub index: u64,
-    /// sr25519 signature by the output's owner over [`Pallet::signing_hash`].
-    pub signature: [u8; 64],
+pub struct RingInput {
+    /// Global output indices of the ring members (strictly increasing;
+    /// exactly `T::RingSize` of them — one is the real spend, the chain
+    /// cannot tell which).
+    pub ring: BoundedVec<u64, ConstU32<MAX_RING_SIZE>>,
+    /// Key image `I = x·Hp(P)` — the permanent nullifier.
+    pub key_image: [u8; 32],
+    /// Pseudo-output commitment `C'`: same amount as the real input under a
+    /// fresh blinding; feeds the tx balance equation.
+    pub pseudo_commitment: [u8; 32],
+    /// CLSAG signature: `c0 ‖ s_0..s_{n−1} ‖ D`.
+    pub clsag: BoundedVec<u8, ConstU32<CLSAG_MAX_BYTES>>,
 }
 
-/// A complete confidential transfer, submitted as an *unsigned* extrinsic:
-/// like a Monero transaction it is self-authenticating — the input
-/// signatures are the authorization; there is no account or nonce.
+/// A complete RingCT transfer, submitted as an *unsigned* extrinsic: like a
+/// Monero transaction it is self-authenticating — the CLSAGs are the
+/// authorization; there is no account, no signer, no nonce.
 #[derive(
     Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
 pub struct TransferTx {
-    pub inputs: BoundedVec<Input, ConstU32<MAX_INPUTS>>,
+    pub inputs: BoundedVec<RingInput, ConstU32<MAX_INPUTS>>,
     pub outputs: BoundedVec<Output, ConstU32<MAX_OUTPUTS>>,
+    /// Per-tx pubkey `R = r·G` for stealth derivation.
+    pub tx_pubkey: [u8; 32],
     /// One aggregated Bulletproof covering all output commitments.
-    /// Not signed: it is already cryptographically bound to the commitments.
+    /// Not part of the signed message: it is already bound to the
+    /// commitments by its transcript.
     pub range_proof: BoundedVec<u8, ConstU32<MAX_RANGE_PROOF_BYTES>>,
-    /// The one public amount. Consensus: Σ C_in == Σ C_out + fee·B.
+    /// The one public amount. Consensus: Σ C_pseudo == Σ C_out + fee·H.
     pub fee: u64,
 }
 
@@ -130,12 +151,16 @@ pub mod pallet {
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
-        /// Blocks before a regular output may be spent (reorg safety; also a
-        /// decoy-quality rule once rings land).
+        /// Exact required ring size (production: 16). Must be ≤ MAX_RING_SIZE.
+        #[pallet::constant]
+        type RingSize: Get<u32>;
+
+        /// Blocks before an output may be spent *or used as a decoy*
+        /// (reorg safety + ring quality).
         #[pallet::constant]
         type SpendableAge: Get<BlockNumberFor<Self>>;
 
-        /// Blocks before a coinbase output may be spent.
+        /// Blocks before a coinbase output may be spent or used as a decoy.
         #[pallet::constant]
         type CoinbaseMaturity: Get<BlockNumberFor<Self>>;
 
@@ -153,10 +178,9 @@ pub mod pallet {
     #[pallet::storage]
     pub type NextOutputIndex<T> = StorageValue<_, u64, ValueQuery>;
 
-    /// Phase-2 nullifier set: spent global output indices. Never pruned.
-    /// (Phase 3 replaces this with the key-image set.)
+    /// Spent key images. Presence = spent. Never pruned.
     #[pallet::storage]
-    pub type SpentOutputs<T> = StorageMap<_, Twox64Concat, u64, (), OptionQuery>;
+    pub type KeyImages<T> = StorageMap<_, Blake2_128Concat, [u8; 32], (), OptionQuery>;
 
     /// Total coins emitted so far. Public: supply is auditable even though
     /// individual amounts are not.
@@ -174,9 +198,11 @@ pub mod pallet {
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
-        /// A transfer was executed. Contains only already-public data.
+        /// A transfer was executed. Contains only already-public data —
+        /// key images and output indices reveal nothing about sender,
+        /// receiver or amounts.
         Transferred {
-            spent: Vec<u64>,
+            key_images: Vec<[u8; 32]>,
             first_output_index: u64,
             output_count: u32,
             fee: u64,
@@ -194,17 +220,22 @@ pub mod pallet {
     pub enum Error<T> {
         /// A transfer must have at least one input and one output.
         EmptyInputsOrOutputs,
-        /// Input indices must be strictly increasing (sorted, no duplicates).
+        /// Inputs must be strictly ordered by key image (canonical form,
+        /// also rules out duplicate key images inside one tx).
         InputsNotSortedUnique,
-        /// Referenced output does not exist.
+        /// A ring does not have exactly `T::RingSize` members.
+        RingSizeInvalid,
+        /// Ring indices must be strictly increasing (sorted, no duplicates).
+        RingIndicesInvalid,
+        /// A ring member does not exist.
         UnknownOutput,
-        /// Referenced output was already spent.
-        OutputAlreadySpent,
-        /// Referenced output has not reached spendable age / maturity.
+        /// A ring member has not reached spendable age / maturity.
         OutputImmature,
-        /// An input signature does not verify against the output's owner.
-        BadSignature,
-        /// Σ C_in != Σ C_out + fee·B (or a commitment failed to decode).
+        /// This key image has already been spent.
+        KeyImageAlreadySpent,
+        /// The CLSAG did not verify.
+        ClsagInvalid,
+        /// Σ C_pseudo != Σ C_out + fee·H (or a commitment failed to decode).
         BalanceCheckFailed,
         /// The aggregated range proof did not verify.
         RangeProofInvalid,
@@ -226,17 +257,20 @@ pub mod pallet {
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
-        /// The only user-facing operation on this chain: a confidential
-        /// transfer. Unsigned — authorization is carried inside `tx` itself.
+        /// The only user-facing operation on this chain: a RingCT transfer.
+        /// Unsigned — authorization is carried inside `tx` itself.
         #[pallet::call_index(0)]
         #[pallet::weight((
-            // Placeholder until Phase 4 benchmarking; dominated by the
-            // native Bulletproof + balance verification.
-            Weight::from_parts(500_000_000, 0)
-                .saturating_add(T::DbWeight::get().reads_writes(
-                    2 * tx.inputs.len() as u64,
-                    tx.inputs.len() as u64 + tx.outputs.len() as u64 + 2,
-                )),
+            // Placeholder until Phase 4 benchmarking; dominated by native
+            // CLSAG (≈ 2·ring_size scalar mults per input) + Bulletproof.
+            Weight::from_parts(
+                500_000_000_u64.saturating_add(300_000_000 * tx.inputs.len() as u64),
+                0,
+            )
+            .saturating_add(T::DbWeight::get().reads_writes(
+                (T::RingSize::get() as u64 + 1) * tx.inputs.len() as u64,
+                tx.inputs.len() as u64 + tx.outputs.len() as u64 + 2,
+            )),
             DispatchClass::Normal,
             Pays::No,
         ))]
@@ -259,6 +293,7 @@ pub mod pallet {
         pub fn coinbase(
             origin: OriginFor<T>,
             outputs: BoundedVec<CoinbaseOutput, ConstU32<MAX_OUTPUTS>>,
+            tx_pubkey: [u8; 32],
         ) -> DispatchResult {
             ensure_none(origin)?;
             ensure!(!CoinbaseDone::<T>::get(), Error::<T>::CoinbaseAlreadyIncluded);
@@ -286,8 +321,10 @@ pub mod pallet {
                 Outputs::<T>::insert(
                     next,
                     StoredOutput {
-                        owner: out.owner,
+                        one_time_key: out.one_time_key,
                         commitment: crypto_host::value_commitment_v1(out.amount),
+                        tx_pubkey,
+                        view_tag: 0,
                         amount: Some(out.amount),
                         height,
                         coinbase: true,
@@ -330,20 +367,21 @@ pub mod pallet {
                 return InvalidTransaction::BadProof.into();
             }
             for input in &tx.inputs {
-                if SpentOutputs::<T>::contains_key(input.index) {
+                if KeyImages::<T>::contains_key(input.key_image) {
                     return InvalidTransaction::Stale.into();
-                }
-                if !Outputs::<T>::contains_key(input.index) {
-                    return InvalidTransaction::Future.into();
                 }
             }
 
             Ok(ValidTransaction {
                 priority: tx.fee / encoded_len.max(1),
                 requires: Vec::new(),
-                // One tag per spent output: the pool auto-rejects conflicting
-                // spends and keeps the higher-priority tx.
-                provides: tx.inputs.iter().map(|i| (b"kohl/out", i.index).encode()).collect(),
+                // One tag per key image: the pool auto-rejects conflicting
+                // spends of the same output and keeps the higher-priority tx.
+                provides: tx
+                    .inputs
+                    .iter()
+                    .map(|i| (b"kohl/ki", i.key_image).encode())
+                    .collect(),
                 longevity: 64,
                 propagate: true,
             })
@@ -357,10 +395,10 @@ pub mod pallet {
         const INHERENT_IDENTIFIER: sp_inherents::InherentIdentifier = INHERENT_IDENTIFIER;
 
         fn create_inherent(data: &InherentData) -> Option<Self::Call> {
-            let outputs: Vec<CoinbaseOutput> =
+            let (outputs, tx_pubkey): (Vec<CoinbaseOutput>, [u8; 32]) =
                 data.get_data(&Self::INHERENT_IDENTIFIER).ok().flatten()?;
             let outputs = BoundedVec::try_from(outputs).ok()?;
-            Some(Call::coinbase { outputs })
+            Some(Call::coinbase { outputs, tx_pubkey })
         }
 
         fn check_inherent(_call: &Self::Call, _data: &InherentData) -> Result<(), Self::Error> {
@@ -374,12 +412,20 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
-        /// The message every input owner signs: a hash binding the exact
-        /// input set, all outputs (keys, commitments, payloads) and the fee.
-        /// The range proof is deliberately excluded — it is already bound to
-        /// the commitments by its transcript.
-        pub fn signing_hash(indices: &[u64], outputs: &[Output], fee: u64) -> [u8; 32] {
-            sp_io::hashing::blake2_256(&(SIGNING_DOMAIN, indices, outputs, fee).encode())
+        /// The message every CLSAG signs: a hash binding the rings, key
+        /// images, pseudo-commitments, all outputs, the tx pubkey and the
+        /// fee — everything except the signatures themselves (and the range
+        /// proof, which its transcript binds to the commitments).
+        pub fn signing_hash(tx: &TransferTx) -> [u8; 32] {
+            let rings: Vec<&BoundedVec<u64, ConstU32<MAX_RING_SIZE>>> =
+                tx.inputs.iter().map(|i| &i.ring).collect();
+            let key_images: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.key_image).collect();
+            let pseudos: Vec<[u8; 32]> =
+                tx.inputs.iter().map(|i| i.pseudo_commitment).collect();
+            sp_io::hashing::blake2_256(
+                &(SIGNING_DOMAIN, rings, key_images, pseudos, &tx.outputs, tx.tx_pubkey, tx.fee)
+                    .encode(),
+            )
         }
 
         /// Full consensus verification of a transfer (BLUEPRINT.md §3.4).
@@ -388,8 +434,9 @@ pub mod pallet {
                 !tx.inputs.is_empty() && !tx.outputs.is_empty(),
                 Error::<T>::EmptyInputsOrOutputs
             );
+            // Canonical input order by key image ⇒ no in-tx duplicates.
             ensure!(
-                tx.inputs.windows(2).all(|w| w[0].index < w[1].index),
+                tx.inputs.windows(2).all(|w| w[0].key_image < w[1].key_image),
                 Error::<T>::InputsNotSortedUnique
             );
             ensure!(
@@ -398,32 +445,48 @@ pub mod pallet {
             );
 
             let now = frame_system::Pallet::<T>::block_number();
-            let indices: Vec<u64> = tx.inputs.iter().map(|i| i.index).collect();
-            let msg = Self::signing_hash(&indices, &tx.outputs, tx.fee);
+            let ring_size = T::RingSize::get() as usize;
+            let msg = Self::signing_hash(tx);
 
-            let mut input_commitments = Vec::with_capacity(tx.inputs.len() * 32);
+            let mut pseudo_commitments = Vec::with_capacity(tx.inputs.len() * 32);
             for input in &tx.inputs {
+                ensure!(input.ring.len() == ring_size, Error::<T>::RingSizeInvalid);
                 ensure!(
-                    !SpentOutputs::<T>::contains_key(input.index),
-                    Error::<T>::OutputAlreadySpent
+                    input.ring.windows(2).all(|w| w[0] < w[1]),
+                    Error::<T>::RingIndicesInvalid
                 );
-                let stored = Outputs::<T>::get(input.index).ok_or(Error::<T>::UnknownOutput)?;
-
-                let age = if stored.coinbase {
-                    T::CoinbaseMaturity::get()
-                } else {
-                    T::SpendableAge::get()
-                };
-                ensure!(now >= stored.height + age, Error::<T>::OutputImmature);
-
-                let sig = sp_core::sr25519::Signature::from_raw(input.signature);
-                let owner = sp_core::sr25519::Public::from_raw(stored.owner);
                 ensure!(
-                    sp_io::crypto::sr25519_verify(&sig, &msg, &owner),
-                    Error::<T>::BadSignature
+                    !KeyImages::<T>::contains_key(input.key_image),
+                    Error::<T>::KeyImageAlreadySpent
                 );
 
-                input_commitments.extend_from_slice(&stored.commitment);
+                // Assemble the ring blob; every member (decoys included)
+                // must exist and be mature — a ring is only as private as
+                // its weakest member.
+                let mut ring_blob = Vec::with_capacity(ring_size * 64);
+                for index in &input.ring {
+                    let member = Outputs::<T>::get(index).ok_or(Error::<T>::UnknownOutput)?;
+                    let age = if member.coinbase {
+                        T::CoinbaseMaturity::get()
+                    } else {
+                        T::SpendableAge::get()
+                    };
+                    ensure!(now >= member.height + age, Error::<T>::OutputImmature);
+                    ring_blob.extend_from_slice(&member.one_time_key);
+                    ring_blob.extend_from_slice(&member.commitment);
+                }
+
+                ensure!(
+                    crypto_host::verify_clsag_v1(
+                        &msg,
+                        &ring_blob,
+                        &input.pseudo_commitment,
+                        &input.key_image,
+                        &input.clsag,
+                    ),
+                    Error::<T>::ClsagInvalid
+                );
+                pseudo_commitments.extend_from_slice(&input.pseudo_commitment);
             }
 
             let mut output_commitments = Vec::with_capacity(tx.outputs.len() * 32);
@@ -431,9 +494,9 @@ pub mod pallet {
                 output_commitments.extend_from_slice(&out.commitment);
             }
 
-            // Balance equation over commitments: Σ C_in == Σ C_out + fee·B.
+            // Balance equation: Σ C_pseudo == Σ C_out + fee·H.
             ensure!(
-                crypto_host::verify_balance_v1(&input_commitments, &output_commitments, tx.fee),
+                crypto_host::verify_balance_v1(&pseudo_commitments, &output_commitments, tx.fee),
                 Error::<T>::BalanceCheckFailed
             );
             // Every output amount ∈ [0, 2^64): no negative-amount minting.
@@ -446,9 +509,9 @@ pub mod pallet {
 
         /// State changes — only reached after every check passed.
         fn apply_transfer(tx: TransferTx) -> DispatchResult {
-            let spent: Vec<u64> = tx.inputs.iter().map(|i| i.index).collect();
-            for index in &spent {
-                SpentOutputs::<T>::insert(index, ());
+            let key_images: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.key_image).collect();
+            for ki in &key_images {
+                KeyImages::<T>::insert(ki, ());
             }
             BlockFees::<T>::mutate(|f| *f = f.saturating_add(tx.fee));
 
@@ -459,8 +522,10 @@ pub mod pallet {
                 Outputs::<T>::insert(
                     next,
                     StoredOutput {
-                        owner: out.owner,
+                        one_time_key: out.one_time_key,
                         commitment: out.commitment,
+                        tx_pubkey: tx.tx_pubkey,
+                        view_tag: out.view_tag,
                         amount: None,
                         height,
                         coinbase: false,
@@ -471,7 +536,7 @@ pub mod pallet {
             NextOutputIndex::<T>::put(next);
 
             Self::deposit_event(Event::Transferred {
-                spent,
+                key_images,
                 first_output_index: first,
                 output_count: tx.outputs.len() as u32,
                 fee: tx.fee,
