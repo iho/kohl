@@ -1,0 +1,41 @@
+[package]
+name = "kohl-pow"
+description = "RandomX proof-of-work for the kohl chain: mining core plus the sc-consensus-pow algorithm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Mining core (always built) — light deps only.
+codec = { workspace = true, features = ["std"] }
+sp-core = { workspace = true, features = ["std"] }
+blake2 = { version = "0.10", default-features = false }
+
+# RandomX FFI — needs a C++ toolchain (cmake + clang). Off by default.
+randomx-rs = { version = "1", optional = true }
+
+# sc-consensus-pow algorithm wiring — pulls the client stack. Off by default.
+sp-api = { workspace = true, optional = true, features = ["std"] }
+sp-runtime = { workspace = true, optional = true, features = ["std"] }
+sp-consensus-pow = { workspace = true, optional = true, features = ["std"] }
+sc-consensus-pow = { workspace = true, optional = true }
+sc-client-api = { workspace = true, optional = true }
+kohl-runtime-api = { workspace = true, optional = true, features = ["std"] }
+
+[features]
+# Default = pure mining core, unit-testable without a C++ toolchain or the
+# full client stack.
+default = []
+# RandomX-backed hashing (production). Requires cmake + a C++ compiler.
+randomx = ["dep:randomx-rs"]
+# The sc-consensus-pow `PowAlgorithm` impl, wired to the runtime's
+# DifficultyApi. Enabled by the node crate.
+node = [
+    "dep:sp-api",
+    "dep:sp-runtime",
+    "dep:sp-consensus-pow",
+    "dep:sc-consensus-pow",
+    "dep:sc-client-api",
+    "dep:kohl-runtime-api",
+]

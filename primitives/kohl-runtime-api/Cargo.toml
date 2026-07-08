@@ -1,0 +1,26 @@
+[package]
+name = "kohl-runtime-api"
+description = "Runtime API declarations shared by the kohl runtime, node and wallet"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+codec = { workspace = true }
+scale-info = { workspace = true }
+sp-api = { workspace = true }
+sp-core = { workspace = true }
+sp-runtime = { workspace = true }
+pallet-ringct = { workspace = true }
+
+[features]
+default = ["std"]
+std = [
+    "codec/std",
+    "scale-info/std",
+    "sp-api/std",
+    "sp-core/std",
+    "sp-runtime/std",
+    "pallet-ringct/std",
+]

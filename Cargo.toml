@@ -3,7 +3,11 @@ resolver = "2"
 members = [
     "primitives/ringct-primitives",
     "primitives/ringct-crypto",
+    "primitives/kohl-runtime-api",
     "pallets/ringct",
+    "pallets/difficulty",
+    "consensus/kohl-pow",
+    "runtime",
 ]
 
 [workspace.package]
@@ -24,10 +28,28 @@ sp-io = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-st
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 sp-inherents = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 sp-runtime-interface = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+pallet-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-api = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-consensus-pow = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sc-consensus-pow = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
+sc-client-api = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
+frame-executive = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-block-builder = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-genesis-builder = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-offchain = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-transaction-pool = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+sp-version = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+frame-system-rpc-runtime-api = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+substrate-wasm-builder = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
+serde_json = { version = "1", default-features = false }
 
 # Local crates
 ringct-primitives = { path = "primitives/ringct-primitives", default-features = false }
 ringct-crypto = { path = "primitives/ringct-crypto", default-features = false }
+pallet-difficulty = { path = "pallets/difficulty", default-features = false }
+kohl-runtime-api = { path = "primitives/kohl-runtime-api", default-features = false }
+kohl-pow = { path = "consensus/kohl-pow", default-features = false }
+kohl-runtime = { path = "runtime", default-features = false }
 pallet-ringct = { path = "pallets/ringct", default-features = false }
 
 [profile.release]
