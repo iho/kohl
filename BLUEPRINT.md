@@ -10,6 +10,29 @@ there is no transparent transfer path.
 
 ---
 
+## Implementation Status
+
+This repository implements the blueprint through Phase 4 (all crates compile against
+`polkadot-stable2606`; 44 tests green). Layout:
+
+| Crate | Role | Status |
+|---|---|---|
+| `primitives/ringct-primitives` | consensus constants, emission curve | ✅ tested |
+| `primitives/ringct-crypto` | Pedersen commitments, Bulletproofs, **CLSAG**, **stealth addresses**, host functions | ✅ tested |
+| `primitives/kohl-runtime-api` | `DifficultyApi` + `RingCtApi` declarations | ✅ builds |
+| `pallets/ringct` | the monetary system (outputs, key images, RingCT transfers, coinbase) | ✅ tested |
+| `pallets/difficulty` | LWMA PoW difficulty | ✅ tested |
+| `consensus/kohl-pow` | mining core + `sc-consensus-pow` `PowAlgorithm` (RandomX) | ✅ core tested; `node`/`randomx` feature-gated |
+| `runtime` | `#[frame_support::runtime]` wiring, genesis, runtime APIs | ✅ builds native |
+
+The privacy cryptography and the full transfer/consensus logic are implemented and tested.
+**Remaining work**: the node-service binary (`sc-service` assembly, miner, chain spec CLI),
+`frame-benchmarking` weights, epoch-rotating RandomX seed, and the migration off the
+deprecated `ValidateUnsigned` to `#[pallet::authorize]`. The WASM runtime is built native
+here only because the `wasm32` target is not installed in this environment (`SKIP_WASM_BUILD`).
+
+---
+
 ## 0. Understanding of the Requirements (Confirmation)
 
 - **Scope**: private fungible value transfer only. No contracts pallet, no EVM, no

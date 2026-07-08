@@ -61,7 +61,7 @@ where
         _parent: &BlockId<B>,
         pre_hash: &B::Hash,
         _pre_digest: Option<&[u8]>,
-        seal: &[u8],
+        seal: &Vec<u8>,
         difficulty: Self::Difficulty,
     ) -> Result<bool, Error<B>> {
         Ok(verify_seal(
