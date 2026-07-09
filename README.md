@@ -150,18 +150,43 @@ python3 examples/learn_ringct.py --check  # self-tests
 
 Companion write-up: **[GLOSSARY.md](GLOSSARY.md)** (acronyms, math, Python toys).
 
-### Benchmarks & supply-chain checks
+### Benchmarks (production WASM)
+
+Kohl’s transfer path uses **custom host functions**. Stock
+[`frame-omni-bencher`](https://crates.io/crates/frame-omni-bencher) only
+registers the Polkadot host set, so it **cannot** measure RingCT correctly.
+
+Use the node CLI instead (same host functions as a validator):
 
 ```bash
-# Host crypto micro-benches (CLSAG / Bulletproofs / balance):
+# Full pipeline (build + measure → pallets/ringct/src/weights_machine.rs):
+./scripts/benchmark-ringct.sh
+
+# Or manually:
+cargo build -p kohl-runtime --release --features runtime-benchmarks
+cargo build -p kohl-node --release --features runtime-benchmarks
+./target/release/kohl benchmark pallet \
+  --runtime target/release/wbuild/kohl-runtime/kohl_runtime.compact.compressed.wasm \
+  --genesis-builder=runtime \
+  --wasm-execution=compiled \
+  --pallet pallet_ringct --extrinsic '*' \
+  --steps 50 --repeat 20 \
+  --output ./pallets/ringct/src/weights_machine.rs
+```
+
+(`--chain` and `--runtime` are mutually exclusive; prefer `--runtime` +
+`--genesis-builder=runtime` for an explicit production WASM blob.)
+
+Host crypto micro-benches (no WASM):
+
+```bash
 cargo bench -p ringct-crypto --bench crypto
+```
 
-# Pallet extrinsic benchmarks (feature-gated scaffold):
-cargo test -p pallet-ringct --features runtime-benchmarks
+Supply-chain:
 
-# Advisory / license scan (requires cargo-deny):
-cargo install cargo-deny
-cargo deny check
+```bash
+cargo install cargo-deny && cargo deny check
 ```
 
 ### Network privacy (recommended)

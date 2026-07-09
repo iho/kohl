@@ -96,6 +96,54 @@ pub fn run() -> sc_cli::Result<()> {
                 Ok((cmd.run(client, backend, Some(aux_revert)), task_manager))
             })
         }
+        Some(Subcommand::Benchmark(cmd)) => {
+            let runner = cli.create_runner(cmd)?;
+            runner.sync_run(|config| {
+                use frame_benchmarking_cli::{BenchmarkCmd, SUBSTRATE_REFERENCE_HARDWARE};
+                // Extra host functions beyond Substrate + frame-benchmarking.
+                // (RingCT CLSAG / BP / balance live here — stock omni-bencher
+                // does not register them.)
+                type ExtraHostFunctions = ringct_crypto::RingCtHostFunctions;
+
+                match cmd {
+                    BenchmarkCmd::Pallet(cmd) => {
+                        if !cfg!(feature = "runtime-benchmarks") {
+                            return Err(
+                                "Runtime benchmarks are not enabled. Rebuild with: \
+                                 cargo build -p kohl-node --release --features runtime-benchmarks"
+                                    .into(),
+                            );
+                        }
+                        cmd.run_with_spec::<sp_runtime::traits::HashingFor<Block>, ExtraHostFunctions>(
+                            Some(config.chain_spec),
+                        )
+                    }
+                    BenchmarkCmd::Block(cmd) => {
+                        let PartialComponents { client, .. } = service::new_partial(&config)?;
+                        cmd.run(client)
+                    }
+                    #[cfg(not(feature = "runtime-benchmarks"))]
+                    BenchmarkCmd::Storage(_) => Err(
+                        "Storage benchmarking requires --features runtime-benchmarks.".into(),
+                    ),
+                    #[cfg(feature = "runtime-benchmarks")]
+                    BenchmarkCmd::Storage(cmd) => {
+                        let PartialComponents { client, backend, .. } =
+                            service::new_partial(&config)?;
+                        let db = backend.expose_db();
+                        let storage = backend.expose_storage();
+                        cmd.run(config, client, db, storage, None)
+                    }
+                    BenchmarkCmd::Machine(cmd) => {
+                        cmd.run(&config, SUBSTRATE_REFERENCE_HARDWARE.clone())
+                    }
+                    BenchmarkCmd::Overhead(_) | BenchmarkCmd::Extrinsic(_) => Err(
+                        "Overhead/extrinsic benchmarks are not wired for this PoW cash chain."
+                            .into(),
+                    ),
+                }
+            })
+        }
         None => {
             let mining_seed = parse_mining_seed(cli.mining_seed.as_deref())?;
             let runner = cli.create_runner(&cli.run)?;

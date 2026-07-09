@@ -46,6 +46,13 @@ enum Command {
     },
 }
 
+/// A cryptographically strong 64-bit seed from the OS RNG.
+fn os_random_u64() -> Result<u64, Box<dyn Error>> {
+    let mut buf = [0u8; 8];
+    getrandom::getrandom(&mut buf).map_err(|e| format!("OS RNG unavailable: {e}"))?;
+    Ok(u64::from_le_bytes(buf))
+}
+
 fn parse_seed(s: &str) -> Result<[u8; 32], Box<dyn Error>> {
     let bytes = hex::decode(s.trim_start_matches("0x"))?;
     if bytes.len() != 32 {
@@ -76,6 +83,24 @@ fn fetch_all_outputs(
     rpc.outputs_in_range(0, best)
 }
 
+/// Split owned outputs into (unspent, spent) by querying the chain's key
+/// image set — scanning alone cannot tell whether we already spent an output.
+fn split_by_spent(
+    rpc: &RpcClient,
+    owned: Vec<kohl_wallet::OwnedOutput>,
+) -> Result<(Vec<kohl_wallet::OwnedOutput>, Vec<kohl_wallet::OwnedOutput>), Box<dyn Error>> {
+    let mut unspent = Vec::new();
+    let mut spent = Vec::new();
+    for o in owned {
+        if rpc.is_key_image_spent(o.key_image)? {
+            spent.push(o);
+        } else {
+            unspent.push(o);
+        }
+    }
+    Ok((unspent, spent))
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     match Cli::parse().command {
         Command::Address { seed } => {
@@ -88,10 +113,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             let client = RpcClient::new(&rpc);
             let outputs = fetch_all_outputs(&client)?;
             let owned = wallet.scan(&outputs);
-            let total: u64 = owned.iter().map(|o| o.amount).sum();
+            let (unspent, spent) = split_by_spent(&client, owned)?;
+            let total: u64 = unspent.iter().map(|o| o.amount).sum();
             println!("address: {}", wallet.address_string());
-            println!("scanned {} outputs, own {}", outputs.len(), owned.len());
-            for o in &owned {
+            println!(
+                "scanned {} outputs, own {} ({} unspent, {} spent)",
+                outputs.len(),
+                unspent.len() + spent.len(),
+                unspent.len(),
+                spent.len()
+            );
+            for o in &unspent {
                 println!(
                     "  #{:<6} amount={:<14} {}",
                     o.global_index,
@@ -99,10 +131,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                     if o.coinbase { "coinbase" } else { "" }
                 );
             }
+            for o in &spent {
+                println!("  #{:<6} amount={:<14} spent", o.global_index, o.amount);
+            }
             println!("balance: {} atomic units", total);
         }
 
         Command::Send { seed, rpc, to, amount, ring } => {
+            if ring < 2 {
+                return Err("ring size must be at least 2 (chain requires 16)".into());
+            }
             let wallet = Wallet::from_seed(&parse_seed(&seed)?);
             let dest = parse_address(&to)?;
             let client = RpcClient::new(&rpc);
@@ -111,6 +149,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let fee_per_byte = client.min_fee_per_byte()?;
             let all = client.outputs_in_range(0, best)?;
             let owned = wallet.scan(&all);
+            // Drop outputs whose key image is already on chain — spending
+            // them again can only produce a rejected transaction.
+            let (owned, _spent) = split_by_spent(&client, owned)?;
 
             // Fee estimate scales with input count; start with 1-in/2-out size.
             let est_fee = fee_per_byte.saturating_mul(3_000);
@@ -118,7 +159,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut mature: Vec<_> =
                 owned.into_iter().filter(|o| is_mature(o, best)).collect();
             // Prefer larger outputs first (fewer inputs).
-            mature.sort_by(|a, b| b.amount.cmp(&a.amount));
+            mature.sort_by_key(|o| std::cmp::Reverse(o.amount));
             let mut selected = Vec::new();
             let mut total = 0u64;
             for o in mature {
@@ -155,10 +196,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 })
                 .collect();
             let need = ring - 1;
-            let mut rng_seed = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(1);
+            // Seed decoy selection from OS entropy, not wall-clock time: a
+            // guessable seed would let an observer reproduce the draw and
+            // pick out the real spend among the ring (a deanonymization
+            // vector). Monero likewise samples decoys with a CSPRNG.
+            let mut rng_seed = os_random_u64()?;
             let mut rings = Vec::with_capacity(selected.len());
             for _ in &selected {
                 let decoys = kohl_wallet::sample_decoys(&candidates, need, best, rng_seed)

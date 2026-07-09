@@ -18,6 +18,7 @@ frame-executive = { workspace = true }
 frame-support = { workspace = true, features = ["experimental"] }
 frame-system = { workspace = true }
 frame-system-rpc-runtime-api = { workspace = true }
+frame-benchmarking = { workspace = true, optional = true }
 pallet-timestamp = { workspace = true }
 
 pallet-ringct = { workspace = true }
@@ -33,6 +34,7 @@ sp-inherents = { workspace = true }
 sp-offchain = { workspace = true }
 sp-runtime = { workspace = true, features = ["serde"] }
 sp-session = { workspace = true }
+sp-storage = { workspace = true, optional = true }
 sp-transaction-pool = { workspace = true }
 sp-version = { workspace = true, features = ["serde"] }
 
@@ -49,6 +51,7 @@ std = [
     "frame-support/std",
     "frame-system/std",
     "frame-system-rpc-runtime-api/std",
+    "frame-benchmarking?/std",
     "pallet-timestamp/std",
     "pallet-ringct/std",
     "pallet-difficulty/std",
@@ -62,7 +65,17 @@ std = [
     "sp-offchain/std",
     "sp-runtime/std",
     "sp-session/std",
+    "sp-storage?/std",
     "sp-transaction-pool/std",
     "sp-version/std",
     "substrate-wasm-builder",
+]
+runtime-benchmarks = [
+    "frame-benchmarking/runtime-benchmarks",
+    "frame-support/runtime-benchmarks",
+    "frame-system/runtime-benchmarks",
+    "pallet-timestamp/runtime-benchmarks",
+    "pallet-ringct/runtime-benchmarks",
+    "sp-runtime/runtime-benchmarks",
+    "dep:sp-storage",
 ]

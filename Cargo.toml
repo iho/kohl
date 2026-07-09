@@ -26,6 +26,7 @@ scale-info = { version = "2.11", default-features = false, features = ["derive"]
 frame-support = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 frame-system = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 frame-benchmarking = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+frame-benchmarking-cli = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sp-core = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 sp-io = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
@@ -59,6 +60,7 @@ sc-basic-authorship = { git = "https://github.com/paritytech/polkadot-sdk", tag 
 sc-offchain = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sc-telemetry = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sp-blockchain = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
+sp-storage = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 sp-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 substrate-frame-rpc-system = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 clap = { version = "4", features = ["derive"] }

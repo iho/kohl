@@ -21,6 +21,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
 ureq = { version = "2", features = ["json"] }
 hex = "0.4"
+getrandom = "0.2"
 
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }

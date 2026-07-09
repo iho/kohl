@@ -100,7 +100,7 @@ fn build_ring_spends(spends: &[SpendSpec], out_amounts: &[u64], fee: u64) -> Tra
         prepared.push((spec, position, pseudo_blinding, pseudo_commitment, key_image));
     }
     // Canonical input order by key image.
-    prepared.sort_by(|a, b| a.4.cmp(&b.4));
+    prepared.sort_by_key(|p| p.4);
 
     let pseudo_blindings: Vec<[u8; 32]> = prepared.iter().map(|p| p.2).collect();
     let mut out_blindings: Vec<[u8; 32]> =

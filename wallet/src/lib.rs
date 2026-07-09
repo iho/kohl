@@ -149,7 +149,13 @@ impl Wallet {
         send_amount: u64,
         fee: u64,
     ) -> Result<TransferTx, WalletError> {
-        self.build_transfer_multi(&[input.clone()], &[decoys.to_vec()], dest, send_amount, fee)
+        self.build_transfer_multi(
+            core::slice::from_ref(input),
+            &[decoys.to_vec()],
+            dest,
+            send_amount,
+            fee,
+        )
     }
 
     /// Build a RingCT transfer spending one or more owned outputs.
@@ -239,7 +245,7 @@ impl Wallet {
         }
 
         // Canonical order by key image (matches chain rule).
-        prepared.sort_by(|a, b| a.input.key_image.cmp(&b.input.key_image));
+        prepared.sort_by_key(|p| p.input.key_image);
 
         let (proof, _commits) = crypto::prove_range(&[send_amount, change], &[b0, b1])
             .ok_or(WalletError::Crypto("range proof"))?;

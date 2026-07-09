@@ -64,7 +64,7 @@ fn decompress(bytes: &[u8]) -> Option<RistrettoPoint> {
 
 /// Parse a ring blob into (one-time keys, commitments).
 fn parse_ring(blob: &[u8]) -> Option<(Vec<RistrettoPoint>, Vec<RistrettoPoint>)> {
-    if blob.is_empty() || blob.len() % 64 != 0 || blob.len() / 64 > MAX_RING {
+    if blob.is_empty() || !blob.len().is_multiple_of(64) || blob.len() / 64 > MAX_RING {
         return None;
     }
     let mut keys = Vec::with_capacity(blob.len() / 64);

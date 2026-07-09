@@ -13,6 +13,9 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarks;
+
 extern crate alloc;
 use alloc::{vec, vec::Vec};
 
@@ -367,6 +370,40 @@ sp_api::impl_runtime_apis! {
 
         fn min_fee_per_byte() -> u64 {
             <Runtime as pallet_ringct::Config>::MinFeePerByte::get()
+        }
+    }
+
+    #[cfg(feature = "runtime-benchmarks")]
+    impl frame_benchmarking::Benchmark<Block> for Runtime {
+        fn benchmark_metadata(
+            extra: bool,
+        ) -> (
+            Vec<frame_benchmarking::BenchmarkList>,
+            Vec<frame_support::traits::StorageInfo>,
+        ) {
+            use frame_benchmarking::BenchmarkList;
+            use frame_support::traits::StorageInfoTrait;
+
+            let mut list = Vec::<BenchmarkList>::new();
+            list_benchmarks!(list, extra);
+
+            let storage_info = AllPalletsWithSystem::storage_info();
+            (list, storage_info)
+        }
+
+        #[allow(non_local_definitions)]
+        fn dispatch_benchmark(
+            config: frame_benchmarking::BenchmarkConfig,
+        ) -> Result<Vec<frame_benchmarking::BenchmarkBatch>, alloc::string::String> {
+            use frame_benchmarking::BenchmarkBatch;
+            use frame_support::traits::WhitelistedStorageKeys;
+            use sp_storage::TrackedStorageKey;
+
+            let whitelist: Vec<TrackedStorageKey> = AllPalletsWithSystem::whitelisted_storage_keys();
+            let mut batches = Vec::<BenchmarkBatch>::new();
+            let params = (&config, &whitelist);
+            add_benchmarks!(params, batches);
+            Ok(batches)
         }
     }
 }

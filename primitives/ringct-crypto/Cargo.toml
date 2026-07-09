@@ -11,6 +11,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(substrate_runtime)"] }
 
 [dependencies]
 sp-runtime-interface = { workspace = true }
+sp-io = { workspace = true, optional = true }
+codec = { workspace = true, optional = true }
 ringct-primitives = { workspace = true }
 
 # Native-only (host/prover side). Never compiled into the WASM runtime.
@@ -31,7 +33,11 @@ harness = false
 default = ["std"]
 std = [
     "sp-runtime-interface/std",
+    "sp-io/std",
+    "codec/std",
     "ringct-primitives/std",
+    "dep:sp-io",
+    "dep:codec",
     "dep:bulletproofs",
     "dep:curve25519-dalek",
     "dep:merlin",

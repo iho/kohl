@@ -37,13 +37,18 @@ The WASM runtime build needs `--allow-undefined` passed to the wasm linker (so t
 and `ringct_crypto` host functions stay as imports); this is wired in `.cargo/config.toml`
 via `WASM_BUILD_RUSTFLAGS`.
 
-**Remaining work**: run `frame-omni-bencher` against a production WASM runtime
-to replace engineered `WeightInfo` with machine numbers; Dandelion++ tx
+**Remaining work**: merge machine weights from `./scripts/benchmark-ringct.sh`
+into production `WeightInfo` after a full STEPS/REPEAT run; Dandelion++ tx
 propagation; external crypto audit (Phase 5).
 
-**Recently landed**: criterion crypto benches; `runtime-benchmarks` scaffold on
-`pallet-ringct`; Tor/network-privacy guidance; `cargo-deny` config; multi-input
-wallet; kohl-ash; ringct RPC; fuzz targets; authorize; epoch PoW seed.
+**Benchmarks**: `frame_benchmarking::Benchmark` is exported by the runtime.
+Because RingCT uses custom host functions, measure with
+`kohl benchmark pallet` (not stock `frame-omni-bencher`). See
+`scripts/benchmark-ringct.sh`.
+
+**Recently landed**: production-WASM benchmark wiring (runtime API + node CLI +
+script); criterion crypto benches; Tor guidance; cargo-deny; multi-input
+wallet; ringct RPC; fuzz; authorize; epoch PoW seed.
 
 ---
 

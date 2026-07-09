@@ -29,6 +29,8 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+extern crate alloc;
+
 #[cfg(feature = "std")]
 pub mod clsag;
 #[cfg(feature = "std")]
@@ -81,7 +83,7 @@ pub mod native {
 
     /// Split a blob into compressed points; `None` unless len % 32 == 0.
     fn parse_points(blob: &[u8]) -> Option<Vec<CompressedRistretto>> {
-        if blob.len() % 32 != 0 {
+        if !blob.len().is_multiple_of(32) {
             return None;
         }
         Some(
@@ -226,7 +228,9 @@ pub mod native {
     }
 }
 
-use sp_runtime_interface::pass_by::{AllocateAndReturnPointer, PassFatPointerAndRead};
+use sp_runtime_interface::pass_by::{
+    AllocateAndReturnByCodec, AllocateAndReturnPointer, PassFatPointerAndRead,
+};
 
 /// The host functions exposed to the runtime. Native implementations above;
 /// the WASM side only sees extern stubs. Register `ringct_crypto::HostFunctions`
@@ -275,6 +279,164 @@ pub trait RingctCrypto {
         let mut bytes = [0u8; 32];
         bytes.copy_from_slice(point);
         native::is_valid_point(&bytes)
+    }
+
+    /// Host-only random keypair as `secret ‖ public` (64 bytes). Used by
+    /// WASM benchmarks (OsRng is not available in the runtime).
+    fn random_secret_key_v1() -> AllocateAndReturnPointer<[u8; 64], 64> {
+        let (sk, pk) = native::random_secret_key();
+        let mut out = [0u8; 64];
+        out[..32].copy_from_slice(&sk);
+        out[32..].copy_from_slice(&pk);
+        out
+    }
+
+    /// Host-only random blinding scalar (32 bytes).
+    fn random_blinding_v1() -> AllocateAndReturnPointer<[u8; 32], 32> {
+        native::random_blinding()
+    }
+
+    /// Host-only Pedersen commit → 32-byte compressed point.
+    fn commit_v1(
+        amount: u64,
+        blinding: PassFatPointerAndRead<&[u8]>,
+    ) -> AllocateAndReturnPointer<[u8; 32], 32> {
+        let mut b = [0u8; 32];
+        if blinding.len() == 32 {
+            b.copy_from_slice(blinding);
+        }
+        native::commit(amount, &b).unwrap_or([0u8; 32])
+    }
+
+    /// Host-only key image of a one-time secret.
+    fn key_image_v1(secret: PassFatPointerAndRead<&[u8]>) -> AllocateAndReturnPointer<[u8; 32], 32> {
+        let mut sk = [0u8; 32];
+        if secret.len() == 32 {
+            sk.copy_from_slice(secret);
+        }
+        clsag::key_image(&sk).unwrap_or([0u8; 32])
+    }
+
+    /// Host-only: build a complete 1-in/1-out transfer for benchmarks.
+    ///
+    /// Inputs (SCALE where noted):
+    /// * `ring_indices` — SCALE `Vec<u64>` of ring members (length = ring size)
+    /// * `ring_blob` — `n × 64` bytes of `P‖C` pairs matching `ring_indices`
+    /// * `real_index` — position of the real spend in the ring
+    /// * `secret` — 32-byte one-time secret of the real spend
+    /// * `amount` / `fee` — public amounts (`amount > fee`)
+    /// * `in_blinding` — 32-byte input blinding (zeros for coinbase)
+    ///
+    /// Returns SCALE-encoded `TransferTx` bytes, or empty on failure.
+    /// Runs on the host so WASM benchmarks can prepare valid CLSAG+BP material
+    /// without pulling `rand`/OsRng into the runtime.
+    fn bench_make_transfer_v1(
+        ring_indices: PassFatPointerAndRead<&[u8]>,
+        ring_blob: PassFatPointerAndRead<&[u8]>,
+        real_index: u32,
+        secret: PassFatPointerAndRead<&[u8]>,
+        amount: u64,
+        fee: u64,
+        in_blinding: PassFatPointerAndRead<&[u8]>,
+    ) -> AllocateAndReturnByCodec<alloc::vec::Vec<u8>> {
+        use alloc::vec::Vec;
+        if amount <= fee || secret.len() != 32 || in_blinding.len() != 32 {
+            return Vec::new();
+        }
+        let Ok(indices) = <Vec<u64> as codec::Decode>::decode(&mut &ring_indices[..]) else {
+            return Vec::new();
+        };
+        let n = indices.len();
+        if n == 0 || ring_blob.len() != n * 64 || (real_index as usize) >= n {
+            return Vec::new();
+        }
+        let mut sk = [0u8; 32];
+        sk.copy_from_slice(secret);
+        let mut in_b = [0u8; 32];
+        in_b.copy_from_slice(in_blinding);
+
+        let out_amount = amount - fee;
+        let pseudo_blinding = native::random_blinding();
+        let Some((proof, commits)) = native::prove_range(&[out_amount], &[pseudo_blinding]) else {
+            return Vec::new();
+        };
+        let Some(pseudo_c) = native::commit(amount, &pseudo_blinding) else {
+            return Vec::new();
+        };
+        let Some(ki) = clsag::key_image(&sk) else {
+            return Vec::new();
+        };
+        let (_, otk) = native::random_secret_key();
+        let (_, tx_pk) = native::random_secret_key();
+
+        // SCALE layout mirrors pallet_ringct::TransferTx (BoundedVec ≡ Vec).
+        #[derive(codec::Encode)]
+        struct RingInputEnc {
+            ring: Vec<u64>,
+            key_image: [u8; 32],
+            pseudo_commitment: [u8; 32],
+            clsag: Vec<u8>,
+        }
+        #[derive(codec::Encode)]
+        struct OutputEnc {
+            one_time_key: [u8; 32],
+            commitment: [u8; 32],
+            view_tag: u8,
+            payload: Vec<u8>,
+        }
+        #[derive(codec::Encode)]
+        struct TransferEnc {
+            inputs: Vec<RingInputEnc>,
+            outputs: Vec<OutputEnc>,
+            tx_pubkey: [u8; 32],
+            range_proof: Vec<u8>,
+            fee: u64,
+        }
+
+        let mut tx = TransferEnc {
+            inputs: vec![RingInputEnc {
+                ring: indices,
+                key_image: ki,
+                pseudo_commitment: pseudo_c,
+                clsag: Vec::new(),
+            }],
+            outputs: vec![OutputEnc {
+                one_time_key: otk,
+                commitment: commits[0],
+                view_tag: 0,
+                payload: Vec::new(),
+            }],
+            tx_pubkey: tx_pk,
+            range_proof: proof,
+            fee,
+        };
+
+        // Must match pallet_ringct::signing_hash / SIGNING_DOMAIN.
+        const SIGNING_DOMAIN: [u8; 16] = *b"kohl/transfer/v3";
+        let rings: Vec<Vec<u64>> = tx.inputs.iter().map(|i| i.ring.clone()).collect();
+        let kis: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.key_image).collect();
+        let pseudos: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.pseudo_commitment).collect();
+        let msg = sp_io::hashing::blake2_256(&codec::Encode::encode(&(
+            SIGNING_DOMAIN,
+            rings,
+            kis,
+            pseudos,
+            &tx.outputs,
+            tx.tx_pubkey,
+            tx.fee,
+        )));
+        let Some(sig) = clsag::sign(
+            &msg,
+            ring_blob,
+            real_index as usize,
+            &sk,
+            &in_b,
+            &pseudo_blinding,
+        ) else {
+            return Vec::new();
+        };
+        tx.inputs[0].clsag = sig.signature;
+        codec::Encode::encode(&tx)
     }
 }
 

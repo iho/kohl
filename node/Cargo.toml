@@ -44,6 +44,7 @@ sp-timestamp = { workspace = true }
 
 substrate-frame-rpc-system = { workspace = true }
 frame-system = { workspace = true, features = ["std"] }
+frame-benchmarking-cli = { workspace = true }
 
 kohl-runtime = { workspace = true, features = ["std"] }
 kohl-runtime-api = { workspace = true, features = ["std"] }
@@ -55,3 +56,13 @@ ringct-crypto = { workspace = true, features = ["std"] }
 default = []
 # Use RandomX for mining/verification instead of the BLAKE2b dev fallback.
 randomx = ["kohl-pow/randomx"]
+# Extrinsic weight benchmarks via `kohl benchmark pallet` (registers RingCT
+# host functions — stock frame-omni-bencher cannot run these).
+runtime-benchmarks = [
+    "frame-benchmarking-cli/runtime-benchmarks",
+    "kohl-runtime/runtime-benchmarks",
+    "pallet-ringct/runtime-benchmarks",
+    "frame-system/runtime-benchmarks",
+    "sc-service/runtime-benchmarks",
+    "sp-runtime/runtime-benchmarks",
+]

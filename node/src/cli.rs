@@ -42,4 +42,11 @@ pub enum Subcommand {
 
     /// Revert the chain to a previous state.
     Revert(sc_cli::RevertCmd),
+
+    /// Benchmark runtime pallets (requires `--features runtime-benchmarks`).
+    ///
+    /// Prefer this over stock `frame-omni-bencher`: kohl's RingCT host
+    /// functions must be registered for transfer benchmarks to run.
+    #[command(subcommand)]
+    Benchmark(frame_benchmarking_cli::BenchmarkCmd),
 }
