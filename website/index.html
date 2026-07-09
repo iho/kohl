@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kohl — Private cash L1</title>
+  <meta name="description" content="Kohl is a pure value-transfer blockchain with mandatory privacy: CLSAG ring signatures, stealth addresses, and confidential RingCT amounts. Fair-launch RandomX PoW. No contracts. No transparent path." />
+  <meta name="theme-color" content="#070707" />
+  <link rel="canonical" href="https://kohl.network/" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://kohl.network/" />
+  <meta property="og:title" content="Kohl — Private cash L1" />
+  <meta property="og:description" content="Mandatory privacy. Fair launch. Cash only. Built with the Polkadot SDK, modeled on Monero’s privacy design." />
+  <meta property="og:image" content="https://kohl.network/assets/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Kohl — Private cash L1" />
+  <meta name="twitter:description" content="Mandatory privacy. Fair launch. Cash only." />
+  <meta name="twitter:image" content="https://kohl.network/assets/og.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <div class="noise" aria-hidden="true"></div>
+  <div class="glow" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="wrap bar">
+      <a class="brand" href="/" aria-label="Kohl home">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M10 7.5v17M10 16.2L21.5 7.5M10 16.2L21.5 24.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>kohl</span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="#privacy">Privacy</a>
+        <a href="#design">Design</a>
+        <a href="#tokenomics">Tokenomics</a>
+        <a href="#status">Status</a>
+        <a href="#start">Start</a>
+      </nav>
+      <a class="btn btn-ghost" href="https://github.com/iho/kohl" rel="noopener noreferrer">GitHub</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Private cash · Layer 1</p>
+          <h1>
+            Money that keeps<br />
+            <em>quiet</em>.
+          </h1>
+          <p class="lede">
+            Kohl is a pure value-transfer chain. Privacy is mandatory at the protocol:
+            no transparent balances, no smart contracts, no EVM. Value moves only as
+            confidential RingCT outputs.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="https://github.com/iho/kohl">View the code</a>
+            <a class="btn btn-secondary" href="#privacy">How privacy works</a>
+          </div>
+          <dl class="hero-stats">
+            <div>
+              <dt>Consensus</dt>
+              <dd>RandomX PoW</dd>
+            </div>
+            <div>
+              <dt>Block time</dt>
+              <dd>60&nbsp;s</dd>
+            </div>
+            <div>
+              <dt>Genesis supply</dt>
+              <dd>Zero</dd>
+            </div>
+            <div>
+              <dt>Curve target</dt>
+              <dd>~92M KOHL</dd>
+            </div>
+          </dl>
+        </div>
+        <aside class="hero-panel" aria-label="Privacy pillars at a glance">
+          <div class="panel-head">
+            <span class="dot"></span>
+            <span>protocol · mandatory privacy</span>
+          </div>
+          <ul class="pillar-list">
+            <li>
+              <span class="pillar-k">Sender</span>
+              <span class="pillar-v">CLSAG rings · 16 members</span>
+            </li>
+            <li>
+              <span class="pillar-k">Receiver</span>
+              <span class="pillar-v">Stealth / one-time keys</span>
+            </li>
+            <li>
+              <span class="pillar-k">Amount</span>
+              <span class="pillar-v">Pedersen + Bulletproofs</span>
+            </li>
+            <li>
+              <span class="pillar-k">Double-spend</span>
+              <span class="pillar-v">Key images (nullifiers)</span>
+            </li>
+          </ul>
+          <p class="panel-note">
+            Not Monero-compatible. Ristretto group + domain-separated tags.
+            Addresses, seeds, and txs are Kohl-native.
+          </p>
+        </aside>
+      </div>
+    </section>
+
+    <section id="privacy" class="section">
+      <div class="wrap">
+        <header class="section-head">
+          <p class="eyebrow">Three pillars</p>
+          <h2>What the chain hides — and how</h2>
+          <p class="section-lede">
+            Every transfer is self-authenticating. There is no account balance, no nonce,
+            and no signed origin for user payments. The CLSAG <em>is</em> the authorization.
+          </p>
+        </header>
+        <div class="cards three">
+          <article class="card">
+            <span class="card-num">01</span>
+            <h3>Sender anonymity</h3>
+            <p>
+              Each input is a ring of 16 outputs — 15 decoys plus the real spend.
+              CLSAG proves knowledge of one private key and a matching key image without
+              revealing which ring member was spent.
+            </p>
+            <p class="card-meta">Hides <strong>which</strong> past output moved</p>
+          </article>
+          <article class="card">
+            <span class="card-num">02</span>
+            <h3>Receiver privacy</h3>
+            <p>
+              Dual-key CryptoNote stealth addresses. Senders derive one-time destinations;
+              only the view key can detect payment, only the spend key can unlock it.
+              View tags keep wallet scanning fast.
+            </p>
+            <p class="card-meta">Hides <strong>who</strong> was paid</p>
+          </article>
+          <article class="card">
+            <span class="card-num">03</span>
+            <h3>Amount confidentiality</h3>
+            <p>
+              Amounts live inside Pedersen commitments. A public fee anchors the balance
+              equation; aggregated Bulletproofs prove every output amount is in range —
+              no overflow minting.
+            </p>
+            <p class="card-meta">Hides <strong>how much</strong> moved</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="design" class="section section-alt">
+      <div class="wrap">
+        <header class="section-head">
+          <p class="eyebrow">Design choices</p>
+          <h2>Cash only. Fair launch. Stable rules.</h2>
+        </header>
+        <div class="split">
+          <div class="split-copy">
+            <ul class="checklist">
+              <li>
+                <strong>No contracts, no EVM, no assets palette.</strong>
+                The runtime is deliberately small: system, timestamp, RingCT, difficulty.
+              </li>
+              <li>
+                <strong>Zero genesis supply.</strong>
+                Every coin is mined. RandomX PoW avoids a premine or sale for the initial stake.
+              </li>
+              <li>
+                <strong>Ristretto everywhere.</strong>
+                Prime-order group avoids historical cofactor / small-subgroup footguns.
+              </li>
+              <li>
+                <strong>Native host crypto.</strong>
+                CLSAG and Bulletproof verification run natively so block times stay practical under WASM.
+              </li>
+              <li>
+                <strong>Fees to miners.</strong>
+                Public fee with a min fee-per-byte floor; carried into the next coinbase.
+              </li>
+            </ul>
+          </div>
+          <figure class="diagram" aria-label="Transfer sketch">
+            <figcaption>Transfer path</figcaption>
+            <pre><code>Wallet                         Runtime (pallet-ringct)
+─────                         ──────────────────────
+pick real output + 15 decoys
+build pseudo-commitments C'
+CLSAG + aggregated BP
+stealth OTKs + masked amounts
+unsigned extrinsic  ────────► shape / maturity / fee
+                              verify CLSAG (host)
+                              ΣC' == ΣC_out + fee·H
+                              verify range proof (host)
+                              insert key images
+                              append outputs</code></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section id="tokenomics" class="section">
+      <div class="wrap">
+        <header class="section-head">
+          <p class="eyebrow">Tokenomics</p>
+          <h2>Monero-like emission, perpetual tail</h2>
+          <p class="section-lede">
+            Smooth decaying curve toward a long-run supply target, then a permanent tail
+            reward so the security budget never hits zero.
+          </p>
+        </header>
+        <div class="metrics">
+          <div class="metric">
+            <span class="metric-label">Atomic unit</span>
+            <span class="metric-value">1e8</span>
+            <span class="metric-hint">per 1 KOHL</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Curve target</span>
+            <span class="metric-value">92M</span>
+            <span class="metric-hint">then slow growth</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">First block</span>
+            <span class="metric-value">~175</span>
+            <span class="metric-hint">KOHL reward</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Tail</span>
+            <span class="metric-value">0.3</span>
+            <span class="metric-hint">KOHL / block forever</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Block time</span>
+            <span class="metric-value">60s</span>
+            <span class="metric-hint">RandomX target</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">Coinbase lock</span>
+            <span class="metric-value">60</span>
+            <span class="metric-hint">blocks maturity</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="status" class="section section-alt">
+      <div class="wrap">
+        <header class="section-head">
+          <p class="eyebrow">Status</p>
+          <h2>Implemented through Phase&nbsp;4</h2>
+          <p class="section-lede">
+            Privacy crypto, monetary rules, LWMA difficulty, PoW node, and wallet crate
+            against <code>polkadot-stable2606</code>. A single-node dev chain can mine and
+            mint coinbase outputs.
+          </p>
+        </header>
+        <div class="status-grid">
+          <ul class="status-list done">
+            <li>RingCT transfer (CLSAG + balance + range proofs)</li>
+            <li>Stealth addresses + view tags</li>
+            <li>Host-function crypto (native verify)</li>
+            <li>Runnable PoW node (<code>--dev</code>)</li>
+            <li>Wallet scan + multi-input spends</li>
+            <li>Local testnet <code>kohl-ash</code></li>
+            <li>Fuzz targets · crypto benches · cargo-deny</li>
+          </ul>
+          <ul class="status-list next">
+            <li>Machine weights into production <code>WeightInfo</code></li>
+            <li>Dandelion++ transaction propagation</li>
+            <li>External cryptography audit</li>
+            <li>Production RandomX (feature-gated today)</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="start" class="section">
+      <div class="wrap">
+        <header class="section-head">
+          <p class="eyebrow">Get started</p>
+          <h2>Run a private cash node</h2>
+        </header>
+        <div class="start-grid">
+          <div class="code-block">
+            <div class="code-bar">
+              <span>shell</span>
+              <button type="button" class="copy" data-copy="build">Copy</button>
+            </div>
+            <pre id="build"><code>cargo build -p kohl-node --release
+
+# Throwaway miner keys (printed at startup):
+./target/release/kohl --dev --validator --tmp
+
+# Persistent payout (same seed as kohl-wallet):
+./target/release/kohl --dev --validator --tmp \
+  --mining-seed &lt;64-hex&gt;</code></pre>
+          </div>
+          <div class="start-aside">
+            <h3>Docs in the repo</h3>
+            <ul class="doc-links">
+              <li><a href="https://github.com/iho/kohl/blob/main/README.md">README — quick start</a></li>
+              <li><a href="https://github.com/iho/kohl/blob/main/BLUEPRINT.md">BLUEPRINT — architecture</a></li>
+              <li><a href="https://github.com/iho/kohl/blob/main/GLOSSARY.md">GLOSSARY — terms &amp; math</a></li>
+              <li><a href="https://github.com/iho/kohl/blob/main/examples/learn_ringct.py">learn_ringct.py — interactive tour</a></li>
+            </ul>
+            <p class="footnote">
+              Until Dandelion++ lands, prefer Tor (or I2P) for P2P and RPC so IP metadata
+              does not undo on-chain privacy.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="cta">
+      <div class="wrap cta-inner">
+        <h2>Build private money in the open.</h2>
+        <p>Source under GPL-3.0. Contributions and review welcome.</p>
+        <a class="btn btn-primary" href="https://github.com/iho/kohl">github.com/iho/kohl</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap bar">
+      <p>© <span id="y"></span> Kohl · Private cash L1</p>
+      <p class="fine">Not investment advice. Software is experimental. Privacy is a protocol property — use it carefully.</p>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById("y").textContent = new Date().getFullYear();
+    document.querySelectorAll("[data-copy]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-copy");
+        const el = document.getElementById(id);
+        const text = el ? el.innerText : "";
+        try {
+          await navigator.clipboard.writeText(text);
+          btn.textContent = "Copied";
+          setTimeout(() => (btn.textContent = "Copy"), 1600);
+        } catch {
+          btn.textContent = "Select & copy";
+        }
+      });
+    });
+  </script>
+</body>
+</html>

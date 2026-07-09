@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Not found — Kohl</title>
+  <meta name="theme-color" content="#070707" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    .notfound {
+      min-height: calc(100vh - 8rem);
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 4rem 1.25rem;
+    }
+    .notfound h1 {
+      margin: 0;
+      font-family: var(--serif);
+      font-weight: 400;
+      font-size: clamp(2.5rem, 6vw, 4rem);
+    }
+    .notfound p {
+      color: var(--muted);
+      margin: 0.75rem 0 1.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <main class="notfound">
+    <div>
+      <p class="eyebrow">404</p>
+      <h1>Nothing here.</h1>
+      <p>That path isn’t on kohl.network.</p>
+      <a class="btn btn-primary" href="/">Back home</a>
+    </div>
+  </main>
+</body>
+</html>
