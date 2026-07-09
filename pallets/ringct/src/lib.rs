@@ -55,6 +55,11 @@ pub const INHERENT_IDENTIFIER: sp_inherents::InherentIdentifier = *b"ringct0b";
 /// (`stealth::mask_amount`); the blinding is derived from the shared secret.
 pub type Payload = BoundedVec<u8, ConstU32<MAX_PAYLOAD_BYTES>>;
 
+/// Inherent data a mining node supplies for its coinbase: the payout
+/// destination `(one_time_key, tx_pubkey)`. The reward amount is computed by
+/// the runtime, not the miner (see `ProvideInherent::create_inherent`).
+pub type CoinbaseInherent = ([u8; 32], [u8; 32]);
+
 /// A newly created confidential output as it appears inside a transaction.
 #[derive(
     Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
@@ -352,10 +357,22 @@ pub mod pallet {
     impl<T: Config> ValidateUnsigned for Pallet<T> {
         type Call = Call<T>;
 
-        fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
-            let Call::transfer { tx } = call else {
-                // `coinbase` is inherent-only: never valid from the pool.
-                return InvalidTransaction::Call.into();
+        fn validate_unsigned(source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+            let tx = match call {
+                Call::transfer { tx } => tx,
+                // The coinbase is a bare inherent: the executive validates it
+                // through this path (`pre_dispatch` → source `InBlock`) when
+                // applying the block. Accept it there, but never from the
+                // gossip pool — and only once per block. Its amount is still
+                // checked by the dispatch logic.
+                Call::coinbase { .. } if matches!(source, TransactionSource::InBlock) => {
+                    return ValidTransaction::with_tag_prefix("RingCtCoinbase")
+                        .and_provides([b"kohl/coinbase".as_slice()].concat())
+                        .longevity(1)
+                        .propagate(false)
+                        .build();
+                }
+                _ => return InvalidTransaction::Call.into(),
             };
 
             // Cheap pre-validation only; full verification happens at dispatch.
@@ -395,9 +412,19 @@ pub mod pallet {
         const INHERENT_IDENTIFIER: sp_inherents::InherentIdentifier = INHERENT_IDENTIFIER;
 
         fn create_inherent(data: &InherentData) -> Option<Self::Call> {
-            let (outputs, tx_pubkey): (Vec<CoinbaseOutput>, [u8; 32]) =
+            // The miner supplies only its payout destination; the pallet
+            // computes the entitled amount (reward + carried-over fees) from
+            // chain state, so a miner can never over-claim via the inherent
+            // data (and the `coinbase` dispatch re-checks it anyway).
+            let (one_time_key, tx_pubkey): CoinbaseInherent =
                 data.get_data(&Self::INHERENT_IDENTIFIER).ok().flatten()?;
-            let outputs = BoundedVec::try_from(outputs).ok()?;
+            let amount =
+                block_reward(Emitted::<T>::get()).checked_add(BlockFees::<T>::get())?;
+            if amount == 0 {
+                return None;
+            }
+            let outputs =
+                BoundedVec::try_from(alloc::vec![CoinbaseOutput { one_time_key, amount }]).ok()?;
             Some(Call::coinbase { outputs, tx_pubkey })
         }
 

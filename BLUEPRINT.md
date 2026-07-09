@@ -24,20 +24,24 @@ This repository implements the blueprint through Phase 4 (all crates compile aga
 | `pallets/difficulty` | LWMA PoW difficulty | ✅ tested |
 | `consensus/kohl-pow` | mining core + `sc-consensus-pow` `PowAlgorithm` (RandomX) | ✅ core tested; `node`/`randomx` feature-gated |
 | `runtime` | `#[frame_support::runtime]` wiring, genesis, runtime APIs | ✅ builds native + WASM |
-| `node` | `sc-service` PoW node: import queue, mining worker, CPU miner, host-function-extended executor | ✅ builds; runnable dev chain |
+| `node` | `sc-service` PoW node: import queue, mining worker, CPU miner, coinbase minting, host-function-extended executor | ✅ builds; runnable dev chain |
 
 The privacy cryptography, the full transfer/consensus logic, and a runnable PoW node are
 implemented. Build the node with `cargo build -p kohl-node --release` and run a single-node
-dev chain that produces blocks with `./target/release/kohl --dev --validator --tmp`.
+dev chain that mines blocks and mints rewards with
+`./target/release/kohl --dev --validator --tmp`. Each block carries a coinbase inherent that
+mints one confidential output (a stealth one-time key) to the miner's address; the reward
+amount is computed by the runtime (`block_reward + carried fees`), not the miner.
 
 The WASM runtime build needs `--allow-undefined` passed to the wasm linker (so the `sp_io`
 and `ringct_crypto` host functions stay as imports); this is wired in `.cargo/config.toml`
 via `WASM_BUILD_RUSTFLAGS`.
 
 **Remaining work**: `frame-benchmarking` weights (current weights are conservative
-placeholders), an epoch-rotating RandomX seed and coinbase inherent so mining actually
-mints rewards (the dev miner currently produces empty blocks), P2P privacy (Tor/Dandelion++),
-and the migration off the deprecated `ValidateUnsigned` to `#[pallet::authorize]`.
+placeholders), an epoch-rotating RandomX seed (the dev node uses a fixed seed with the
+BLAKE2b fallback hasher), a persistent CLI-configured miner address (the dev node generates
+a throwaway one per run), P2P privacy (Tor/Dandelion++), and the migration off the deprecated
+`ValidateUnsigned` to `#[pallet::authorize]`.
 
 ---
 

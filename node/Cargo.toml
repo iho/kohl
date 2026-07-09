@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
 futures = { workspace = true }
+async-trait = "0.1"
+log = "0.4"
 jsonrpsee = { workspace = true }
 codec = { workspace = true, features = ["std"] }
 
@@ -45,6 +47,7 @@ frame-system = { workspace = true, features = ["std"] }
 kohl-runtime = { workspace = true, features = ["std"] }
 kohl-runtime-api = { workspace = true, features = ["std"] }
 kohl-pow = { workspace = true, features = ["node"] }
+pallet-ringct = { workspace = true, features = ["std"] }
 ringct-crypto = { workspace = true, features = ["std"] }
 
 [features]

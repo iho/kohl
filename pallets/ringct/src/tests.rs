@@ -366,6 +366,38 @@ fn validate_unsigned_provides_key_image_tags() {
 }
 
 #[test]
+fn coinbase_inherent_computes_reward_from_state() {
+    use frame_support::inherent::ProvideInherent;
+    use sp_inherents::InherentData;
+    new_test_ext().execute_with(|| {
+        let mut data = InherentData::new();
+        let dest: crate::CoinbaseInherent = ([9u8; 32], [8u8; 32]);
+        data.put_data(crate::INHERENT_IDENTIFIER, &dest).unwrap();
+
+        let call = <RingCt as ProvideInherent>::create_inherent(&data).expect("inherent built");
+        match call {
+            crate::Call::coinbase { outputs, tx_pubkey } => {
+                assert_eq!(tx_pubkey, [8u8; 32]);
+                assert_eq!(outputs.len(), 1);
+                assert_eq!(outputs[0].one_time_key, [9u8; 32]);
+                // Miner cannot influence the amount: it is reward + fees.
+                assert_eq!(outputs[0].amount, block_reward(0));
+            }
+            _ => panic!("expected coinbase call"),
+        }
+        // And the produced inherent actually applies.
+        assert_ok!(<RingCt as ProvideInherent>::create_inherent(&data)
+            .and_then(|c| match c {
+                crate::Call::coinbase { outputs, tx_pubkey } =>
+                    Some(RingCt::coinbase(RuntimeOrigin::none(), outputs, tx_pubkey)),
+                _ => None,
+            })
+            .unwrap());
+        assert_eq!(crate::Emitted::<Test>::get(), block_reward(0));
+    });
+}
+
+#[test]
 fn coinbase_sum_and_double_mint_rules_hold() {
     new_test_ext().execute_with(|| {
         let reward = block_reward(0);

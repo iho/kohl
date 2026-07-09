@@ -3911,6 +3911,7 @@ checksum = "c33070833c9ee02266356de0c43f723152bd38bd96ddf52c82b3af10c9138b28"
 name = "kohl-node"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "clap",
  "frame-system",
  "futures",
@@ -3918,6 +3919,8 @@ dependencies = [
  "kohl-pow",
  "kohl-runtime",
  "kohl-runtime-api",
+ "log",
+ "pallet-ringct",
  "parity-scale-codec",
  "ringct-crypto",
  "sc-basic-authorship",

@@ -39,13 +39,66 @@ pub type Service = sc_service::PartialComponents<
     (BoxBlockImport, Option<Telemetry>),
 >;
 
-/// Inherent data providers for block production/verification: just the
-/// timestamp. The coinbase inherent is supplied by a mining node that wants
-/// to claim rewards (not wired in this minimal dev service).
+fn hex(bytes: &[u8; 32]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Verification-side inherent data providers: just the timestamp. The
+/// coinbase inherent found in a block is validated by dispatch (its amount
+/// must equal reward + fees), so the importer needs no coinbase data.
 fn create_inherent_data_providers(
 ) -> impl sp_inherents::CreateInherentDataProviders<Block, ()> + Clone {
     |_parent, ()| async move {
         Ok(sp_timestamp::InherentDataProvider::from_system_time())
+    }
+}
+
+/// Supplies the coinbase inherent: the miner's payout destination. A fresh
+/// one-time stealth key + tx pubkey per block, derived to `miner_address`
+/// (so the reward is scannable with the miner's view key and spendable with
+/// its spend key). The reward *amount* is computed by the runtime.
+struct CoinbaseProvider {
+    one_time_key: [u8; 32],
+    tx_pubkey: [u8; 32],
+}
+
+#[async_trait::async_trait]
+impl sp_inherents::InherentDataProvider for CoinbaseProvider {
+    async fn provide_inherent_data(
+        &self,
+        inherent_data: &mut sp_inherents::InherentData,
+    ) -> Result<(), sp_inherents::Error> {
+        inherent_data.put_data(
+            pallet_ringct::INHERENT_IDENTIFIER,
+            &(self.one_time_key, self.tx_pubkey),
+        )
+    }
+
+    async fn try_handle_error(
+        &self,
+        _identifier: &sp_inherents::InherentIdentifier,
+        _error: &[u8],
+    ) -> Option<Result<(), sp_inherents::Error>> {
+        None
+    }
+}
+
+/// Production-side inherent data providers for a miner: timestamp + a fresh
+/// coinbase payout to `miner_address`.
+fn mining_inherent_data_providers(
+    miner_address: ringct_crypto::stealth::StealthAddress,
+) -> impl sp_inherents::CreateInherentDataProviders<Block, ()> + Clone {
+    move |_parent, ()| async move {
+        use ringct_crypto::stealth;
+        let (tx_secret, tx_pubkey) = stealth::tx_keypair();
+        // Derive a one-time key for output index 0 of this coinbase tx.
+        let coinbase = stealth::sender_shared_secret(&tx_secret, &miner_address.view_public)
+            .and_then(|shared| stealth::derive_one_time_key(&shared, &miner_address.spend_public, 0))
+            .map(|(one_time_key, _tag)| CoinbaseProvider { one_time_key, tx_pubkey })
+            .ok_or_else(|| {
+                sp_inherents::Error::Application(Box::from("invalid miner address"))
+            })?;
+        Ok((sp_timestamp::InherentDataProvider::from_system_time(), coinbase))
     }
 }
 
@@ -196,6 +249,16 @@ pub fn new_full<N: sc_network::NetworkBackend<Block, <Block as BlockT>::Hash>>(
 
         let algorithm = KohlPow::new(client.clone(), Arc::new(BlakeHasher));
 
+        // Dev miner payout address. Generated fresh per run; the reward is
+        // scannable/spendable only by a wallet holding these keys. A
+        // production miner would pass a persistent address on the CLI.
+        let (miner_keys, miner_address) = ringct_crypto::stealth::keypair();
+        log::info!(
+            target: "kohl",
+            "⛏  Mining rewards paid to fresh dev address (view_secret={}, spend_secret={})",
+            hex(&miner_keys.view_secret), hex(&miner_keys.spend_secret),
+        );
+
         let (mining_handle, mining_task) = sc_consensus_pow::start_mining_worker(
             block_import,
             client,
@@ -205,7 +268,7 @@ pub fn new_full<N: sc_network::NetworkBackend<Block, <Block as BlockT>::Hash>>(
             sync_service.clone(),
             sync_service.clone(),
             None,
-            create_inherent_data_providers(),
+            mining_inherent_data_providers(miner_address),
             Duration::from_secs(10),
             Duration::from_secs(10),
         );
