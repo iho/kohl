@@ -43,7 +43,11 @@ fn mint_ring_bed(n: usize) -> Vec<Owned> {
     let outputs: Vec<CoinbaseOutput> = keys
         .iter()
         .zip(&amounts)
-        .map(|((_, public), amount)| CoinbaseOutput { one_time_key: *public, amount: *amount, view_tag: 0 })
+        .map(|((_, public), amount)| CoinbaseOutput {
+            one_time_key: *public,
+            amount: *amount,
+            view_tag: 0,
+        })
         .collect();
     assert_ok!(RingCt::coinbase(
         RuntimeOrigin::none(),
@@ -92,21 +96,30 @@ fn build_ring_spends(spends: &[SpendSpec], out_amounts: &[u64], fee: u64) -> Tra
     // Pseudo commitments first (need their blindings for the output balancer).
     let mut prepared = Vec::with_capacity(spends.len());
     for spec in spends {
-        let position =
-            spec.ring.iter().position(|i| *i == spec.real.index).expect("real in ring");
+        let position = spec
+            .ring
+            .iter()
+            .position(|i| *i == spec.real.index)
+            .expect("real in ring");
         let pseudo_blinding = crypto::random_blinding();
         let pseudo_commitment = crypto::commit(spec.real.amount, &pseudo_blinding).unwrap();
         let key_image = clsag::key_image(&spec.real.secret).unwrap();
-        prepared.push((spec, position, pseudo_blinding, pseudo_commitment, key_image));
+        prepared.push((
+            spec,
+            position,
+            pseudo_blinding,
+            pseudo_commitment,
+            key_image,
+        ));
     }
     // Canonical input order by key image.
     prepared.sort_by_key(|p| p.4);
 
     let pseudo_blindings: Vec<[u8; 32]> = prepared.iter().map(|p| p.2).collect();
-    let mut out_blindings: Vec<[u8; 32]> =
-        (1..out_amounts.len()).map(|_| crypto::random_blinding()).collect();
-    out_blindings
-        .push(crypto::balancing_blinding(&pseudo_blindings, &out_blindings).unwrap());
+    let mut out_blindings: Vec<[u8; 32]> = (1..out_amounts.len())
+        .map(|_| crypto::random_blinding())
+        .collect();
+    out_blindings.push(crypto::balancing_blinding(&pseudo_blindings, &out_blindings).unwrap());
     let (proof, commitments) = crypto::prove_range(out_amounts, &out_blindings).unwrap();
     let outputs: Vec<Output> = commitments
         .into_iter()
@@ -236,7 +249,10 @@ fn wrong_ring_size_fails() {
         let real = &bed[0];
         let ring: Vec<u64> = bed[..3].iter().map(|o| o.index).collect(); // only 3
         let tx = build_ring_spend(real, ring, &[real.amount - FEE], FEE);
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::RingSizeInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::RingSizeInvalid
+        );
     });
 }
 
@@ -274,10 +290,20 @@ fn unknown_ring_member_fails() {
             fee: FEE,
         };
         let msg = RingCt::signing_hash(&tx);
-        let sig = clsag::sign(&msg, &blob, 0, &real.secret, &real.blinding, &pseudo_blinding)
-            .unwrap();
+        let sig = clsag::sign(
+            &msg,
+            &blob,
+            0,
+            &real.secret,
+            &real.blinding,
+            &pseudo_blinding,
+        )
+        .unwrap();
         tx.inputs[0].clsag = bounded::<_, 576>(sig.signature);
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::UnknownOutput);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::UnknownOutput
+        );
     });
 }
 
@@ -293,7 +319,10 @@ fn immature_ring_member_poisons_the_ring() {
         let mut ring = vec![real.index, bed[1].index, bed[2].index, late[0].index];
         ring.sort();
         let tx = build_ring_spend(real, ring, &[real.amount - FEE], FEE);
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::OutputImmature);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::OutputImmature
+        );
     });
 }
 
@@ -303,19 +332,28 @@ fn tampering_any_signed_field_invalidates_the_clsag() {
         // Commitment swap.
         let (_, mut tx) = bed_and_spend(0);
         tx.outputs[0].commitment[0] ^= 1;
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
     new_test_ext().execute_with(|| {
         // Receiver swap (one-time key).
         let (_, mut tx) = bed_and_spend(0);
         tx.outputs[0].one_time_key = crypto::random_secret_key().1;
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
     new_test_ext().execute_with(|| {
         // Fee swap.
         let (_, mut tx) = bed_and_spend(0);
         tx.fee += 1;
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
     new_test_ext().execute_with(|| {
         // Garbage signature bytes.
@@ -323,7 +361,10 @@ fn tampering_any_signed_field_invalidates_the_clsag() {
         let mut sig = tx.inputs[0].clsag.to_vec();
         sig[33] ^= 1;
         tx.inputs[0].clsag = bounded::<_, 576>(sig);
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
 }
 
@@ -442,7 +483,11 @@ fn coinbase_sum_and_double_mint_rules_hold() {
         assert_noop!(
             RingCt::coinbase(
                 RuntimeOrigin::none(),
-                bounded::<_, 8>(vec![CoinbaseOutput { one_time_key: key, amount: reward + 1, view_tag: 0 }]),
+                bounded::<_, 8>(vec![CoinbaseOutput {
+                    one_time_key: key,
+                    amount: reward + 1,
+                    view_tag: 0
+                }]),
                 r,
             ),
             Error::<Test>::CoinbaseAmountInvalid
@@ -451,7 +496,11 @@ fn coinbase_sum_and_double_mint_rules_hold() {
         assert_noop!(
             RingCt::coinbase(
                 RuntimeOrigin::none(),
-                bounded::<_, 8>(vec![CoinbaseOutput { one_time_key: key, amount: reward, view_tag: 0 }]),
+                bounded::<_, 8>(vec![CoinbaseOutput {
+                    one_time_key: key,
+                    amount: reward,
+                    view_tag: 0
+                }]),
                 r,
             ),
             Error::<Test>::CoinbaseAlreadyIncluded
@@ -478,7 +527,11 @@ fn stealth_end_to_end() {
         let shared = stealth::sender_shared_secret(&tx_secret, &addr.view_public).unwrap();
         let (otk, tag) = stealth::derive_one_time_key(&shared, &addr.spend_public, 0).unwrap();
 
-        let mut outputs = vec![CoinbaseOutput { one_time_key: otk, amount: reward / 2, view_tag: tag }];
+        let mut outputs = vec![CoinbaseOutput {
+            one_time_key: otk,
+            amount: reward / 2,
+            view_tag: tag,
+        }];
         for _ in 0..3 {
             outputs.push(CoinbaseOutput {
                 one_time_key: crypto::random_secret_key().1,
@@ -487,7 +540,11 @@ fn stealth_end_to_end() {
             });
         }
         outputs[3].amount = reward - reward / 2 - 2 * (reward / 6);
-        assert_ok!(RingCt::coinbase(RuntimeOrigin::none(), bounded::<_, 8>(outputs), tx_pubkey));
+        assert_ok!(RingCt::coinbase(
+            RuntimeOrigin::none(),
+            bounded::<_, 8>(outputs),
+            tx_pubkey
+        ));
 
         // Receiver scans the chain with the view key only.
         let mut found = None;
@@ -502,8 +559,7 @@ fn stealth_end_to_end() {
                 index as u32,
                 &stored.one_time_key,
                 stealth::view_tag(
-                    &stealth::receiver_shared_secret(&keys.view_secret, &stored.tx_pubkey)
-                        .unwrap(),
+                    &stealth::receiver_shared_secret(&keys.view_secret, &stored.tx_pubkey).unwrap(),
                     index as u32,
                 ),
             ) {
@@ -517,8 +573,12 @@ fn stealth_end_to_end() {
         // Recover the one-time spend secret and spend through a ring.
         let secret = stealth::recover_spend_secret(&keys, &stored.tx_pubkey, 0).unwrap();
         run_to_block(100);
-        let owned =
-            Owned { index: 0, secret, amount: reward / 2, blinding: [0u8; 32] };
+        let owned = Owned {
+            index: 0,
+            secret,
+            amount: reward / 2,
+            blinding: [0u8; 32],
+        };
         let tx = build_ring_spend(&owned, vec![0, 1, 2, 3], &[reward / 2 - FEE], FEE);
         assert_ok!(RingCt::transfer(authorized(), tx));
     });
@@ -537,8 +597,14 @@ fn multi_input_transfer_happy_path() {
         let total = a.amount + b.amount;
         let tx = build_ring_spends(
             &[
-                SpendSpec { real: a, ring: ring.clone() },
-                SpendSpec { real: b, ring: ring.clone() },
+                SpendSpec {
+                    real: a,
+                    ring: ring.clone(),
+                },
+                SpendSpec {
+                    real: b,
+                    ring: ring.clone(),
+                },
             ],
             &[total / 2 - FEE, total - total / 2],
             FEE,
@@ -565,8 +631,14 @@ fn multi_input_unsorted_key_images_fail() {
         let ring: Vec<u64> = bed.iter().map(|o| o.index).collect();
         let mut tx = build_ring_spends(
             &[
-                SpendSpec { real: &bed[0], ring: ring.clone() },
-                SpendSpec { real: &bed[1], ring: ring.clone() },
+                SpendSpec {
+                    real: &bed[0],
+                    ring: ring.clone(),
+                },
+                SpendSpec {
+                    real: &bed[1],
+                    ring: ring.clone(),
+                },
             ],
             &[bed[0].amount + bed[1].amount - FEE],
             FEE,
@@ -598,8 +670,7 @@ fn unsorted_or_duplicate_ring_indices_fail() {
 
         // Duplicate indices (not strictly increasing).
         let mut tx = build_ring_spend(real, sorted.clone(), &[real.amount - FEE], FEE);
-        tx.inputs[0].ring =
-            bounded::<_, 16>(vec![sorted[0], sorted[1], sorted[1], sorted[2]]);
+        tx.inputs[0].ring = bounded::<_, 16>(vec![sorted[0], sorted[1], sorted[1], sorted[2]]);
         assert_noop!(
             RingCt::transfer(authorized(), tx),
             Error::<Test>::RingIndicesInvalid
@@ -662,13 +733,19 @@ fn identity_and_garbage_key_images_fail_clsag() {
         // Ristretto identity (canonical all-zero encoding).
         let (_, mut tx) = bed_and_spend(0);
         tx.inputs[0].key_image = [0u8; 32];
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
     new_test_ext().execute_with(|| {
         // Non-canonical / non-decompressible point bytes.
         let (_, mut tx) = bed_and_spend(0);
         tx.inputs[0].key_image = [0xff; 32];
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
 }
 
@@ -678,7 +755,10 @@ fn non_canonical_pseudo_commitment_fails() {
         let (_, mut tx) = bed_and_spend(0);
         tx.inputs[0].pseudo_commitment = [0xff; 32];
         // Bound into the CLSAG message + ring equation → ClsagInvalid first.
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
 }
 
@@ -816,7 +896,11 @@ fn invalid_otk_rejected_at_coinbase_and_transfer() {
         assert_noop!(
             RingCt::coinbase(
                 RuntimeOrigin::none(),
-                bounded::<_, 8>(vec![CoinbaseOutput { one_time_key: good, amount: reward, view_tag: 0 }]),
+                bounded::<_, 8>(vec![CoinbaseOutput {
+                    one_time_key: good,
+                    amount: reward,
+                    view_tag: 0
+                }]),
                 [0u8; 32],
             ),
             Error::<Test>::InvalidPoint
@@ -828,7 +912,10 @@ fn invalid_otk_rejected_at_coinbase_and_transfer() {
         tx.outputs[0].one_time_key = [0xff; 32];
         // CLSAG message binds OTK, so either ClsagInvalid or InvalidPoint —
         // InvalidPoint is checked first on outputs.
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::InvalidPoint);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::InvalidPoint
+        );
     });
 }
 
@@ -837,16 +924,25 @@ fn tx_pubkey_and_payload_are_bound_by_clsag() {
     new_test_ext().execute_with(|| {
         let (_, mut tx) = bed_and_spend(0);
         tx.tx_pubkey = crypto::random_secret_key().1;
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
     new_test_ext().execute_with(|| {
         let (_, mut tx) = bed_and_spend(0);
         tx.outputs[0].payload = bounded::<_, 80>(vec![1, 2, 3, 4]);
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
     new_test_ext().execute_with(|| {
         let (_, mut tx) = bed_and_spend(0);
         tx.outputs[0].view_tag ^= 0xaa;
-        assert_noop!(RingCt::transfer(authorized(), tx), Error::<Test>::ClsagInvalid);
+        assert_noop!(
+            RingCt::transfer(authorized(), tx),
+            Error::<Test>::ClsagInvalid
+        );
     });
 }

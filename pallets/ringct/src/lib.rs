@@ -76,7 +76,16 @@ pub fn signing_hash(tx: &TransferTx) -> [u8; 32] {
     let key_images: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.key_image).collect();
     let pseudos: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.pseudo_commitment).collect();
     sp_io::hashing::blake2_256(
-        &(SIGNING_DOMAIN, rings, key_images, pseudos, &tx.outputs, tx.tx_pubkey, tx.fee).encode(),
+        &(
+            SIGNING_DOMAIN,
+            rings,
+            key_images,
+            pseudos,
+            &tx.outputs,
+            tx.tx_pubkey,
+            tx.fee,
+        )
+            .encode(),
     )
 }
 
@@ -337,7 +346,10 @@ pub mod pallet {
             tx_pubkey: [u8; 32],
         ) -> DispatchResult {
             ensure_none(origin)?;
-            ensure!(!CoinbaseDone::<T>::get(), Error::<T>::CoinbaseAlreadyIncluded);
+            ensure!(
+                !CoinbaseDone::<T>::get(),
+                Error::<T>::CoinbaseAlreadyIncluded
+            );
             ensure!(!outputs.is_empty(), Error::<T>::EmptyInputsOrOutputs);
             ensure!(
                 crypto_host::is_valid_point_v1(&tx_pubkey),
@@ -346,7 +358,9 @@ pub mod pallet {
 
             let reward = block_reward(Emitted::<T>::get());
             let fees = BlockFees::<T>::get();
-            let entitled = reward.checked_add(fees).ok_or(Error::<T>::CoinbaseAmountInvalid)?;
+            let entitled = reward
+                .checked_add(fees)
+                .ok_or(Error::<T>::CoinbaseAmountInvalid)?;
 
             let mut total: u64 = 0;
             for out in &outputs {
@@ -355,13 +369,17 @@ pub mod pallet {
                     crypto_host::is_valid_point_v1(&out.one_time_key),
                     Error::<T>::InvalidPoint
                 );
-                total = total.checked_add(out.amount).ok_or(Error::<T>::CoinbaseAmountInvalid)?;
+                total = total
+                    .checked_add(out.amount)
+                    .ok_or(Error::<T>::CoinbaseAmountInvalid)?;
             }
             ensure!(total == entitled, Error::<T>::CoinbaseAmountInvalid);
 
             BlockFees::<T>::kill();
             Emitted::<T>::try_mutate(|e| -> DispatchResult {
-                *e = e.checked_add(reward).ok_or(Error::<T>::ArithmeticOverflow)?;
+                *e = e
+                    .checked_add(reward)
+                    .ok_or(Error::<T>::ArithmeticOverflow)?;
                 Ok(())
             })?;
             CoinbaseDone::<T>::put(true);
@@ -410,8 +428,7 @@ pub mod pallet {
             // data (and the `coinbase` dispatch re-checks it anyway).
             let (one_time_key, tx_pubkey, view_tag): CoinbaseInherent =
                 data.get_data(&Self::INHERENT_IDENTIFIER).ok().flatten()?;
-            let amount =
-                block_reward(Emitted::<T>::get()).checked_add(BlockFees::<T>::get())?;
+            let amount = block_reward(Emitted::<T>::get()).checked_add(BlockFees::<T>::get())?;
             if amount == 0 {
                 return None;
             }
@@ -481,7 +498,9 @@ pub mod pallet {
             );
             // Canonical input order by key image ⇒ no in-tx duplicates.
             ensure!(
-                tx.inputs.windows(2).all(|w| w[0].key_image < w[1].key_image),
+                tx.inputs
+                    .windows(2)
+                    .all(|w| w[0].key_image < w[1].key_image),
                 Error::<T>::InputsNotSortedUnique
             );
             ensure!(
@@ -570,7 +589,9 @@ pub mod pallet {
                 KeyImages::<T>::insert(ki, ());
             }
             BlockFees::<T>::try_mutate(|f| -> DispatchResult {
-                *f = f.checked_add(tx.fee).ok_or(Error::<T>::ArithmeticOverflow)?;
+                *f = f
+                    .checked_add(tx.fee)
+                    .ok_or(Error::<T>::ArithmeticOverflow)?;
                 Ok(())
             })?;
 

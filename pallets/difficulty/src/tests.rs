@@ -45,7 +45,9 @@ impl frame_support::traits::Get<u128> for ConstU64Min {
 }
 
 fn new_test_ext(initial: u128) -> sp_io::TestExternalities {
-    let mut storage = frame_system::GenesisConfig::<Test>::default().build_storage().unwrap();
+    let mut storage = frame_system::GenesisConfig::<Test>::default()
+        .build_storage()
+        .unwrap();
     pallet_difficulty::GenesisConfig::<Test> {
         initial_difficulty: initial,
         _marker: Default::default(),
@@ -97,7 +99,10 @@ fn fast_blocks_raise_difficulty() {
     let start = 1_000_000u128;
     // Half the target solve time → difficulty should climb well above start.
     let d = run_with_solvetime(start, 60, TARGET / 2);
-    assert!(d > U256::from(start) * 3u32 / 2u32, "expected big rise, got {d}");
+    assert!(
+        d > U256::from(start) * 3u32 / 2u32,
+        "expected big rise, got {d}"
+    );
 }
 
 #[test]
@@ -105,7 +110,10 @@ fn slow_blocks_lower_difficulty() {
     let start = 1_000_000u128;
     // Double the target solve time → difficulty should fall toward half.
     let d = run_with_solvetime(start, 60, TARGET * 2);
-    assert!(d < U256::from(start) * 3u32 / 4u32, "expected big drop, got {d}");
+    assert!(
+        d < U256::from(start) * 3u32 / 4u32,
+        "expected big drop, got {d}"
+    );
     assert!(d >= U256::from(MIN_DIFFICULTY));
 }
 

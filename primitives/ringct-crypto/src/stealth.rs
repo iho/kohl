@@ -51,7 +51,10 @@ fn decompress(bytes: &[u8; 32]) -> Option<RistrettoPoint> {
 
 fn address_of(a: Scalar, b: Scalar) -> (StealthKeys, StealthAddress) {
     (
-        StealthKeys { view_secret: a.to_bytes(), spend_secret: b.to_bytes() },
+        StealthKeys {
+            view_secret: a.to_bytes(),
+            spend_secret: b.to_bytes(),
+        },
         StealthAddress {
             view_public: (G * a).compress().to_bytes(),
             spend_public: (G * b).compress().to_bytes(),
@@ -80,12 +83,20 @@ pub fn tx_keypair() -> ([u8; 32], [u8; 32]) {
 
 /// Sender side: `r·A`, compressed.
 pub fn sender_shared_secret(tx_secret: &[u8; 32], view_public: &[u8; 32]) -> Option<[u8; 32]> {
-    Some((decompress(view_public)? * scalar(tx_secret)?).compress().to_bytes())
+    Some(
+        (decompress(view_public)? * scalar(tx_secret)?)
+            .compress()
+            .to_bytes(),
+    )
 }
 
 /// Receiver side: `a·R`, compressed — equals the sender's `r·A`.
 pub fn receiver_shared_secret(view_secret: &[u8; 32], tx_pubkey: &[u8; 32]) -> Option<[u8; 32]> {
-    Some((decompress(tx_pubkey)? * scalar(view_secret)?).compress().to_bytes())
+    Some(
+        (decompress(tx_pubkey)? * scalar(view_secret)?)
+            .compress()
+            .to_bytes(),
+    )
 }
 
 fn derivation_scalar(shared: &[u8; 32], output_index: u32) -> Scalar {
@@ -177,11 +188,32 @@ mod tests {
         assert_eq!(shared_s, shared_r);
 
         let (otk, tag) = derive_one_time_key(&shared_s, &addr.spend_public, 3).unwrap();
-        assert!(matches_output(&keys.view_secret, &addr.spend_public, &tx_pub, 3, &otk, tag));
+        assert!(matches_output(
+            &keys.view_secret,
+            &addr.spend_public,
+            &tx_pub,
+            3,
+            &otk,
+            tag
+        ));
         // Wrong index or wrong wallet: no match.
-        assert!(!matches_output(&keys.view_secret, &addr.spend_public, &tx_pub, 4, &otk, tag));
+        assert!(!matches_output(
+            &keys.view_secret,
+            &addr.spend_public,
+            &tx_pub,
+            4,
+            &otk,
+            tag
+        ));
         let (other, _) = keypair();
-        assert!(!matches_output(&other.view_secret, &addr.spend_public, &tx_pub, 3, &otk, tag));
+        assert!(!matches_output(
+            &other.view_secret,
+            &addr.spend_public,
+            &tx_pub,
+            3,
+            &otk,
+            tag
+        ));
 
         // Recovered secret actually opens the one-time key.
         let x = recover_spend_secret(&keys, &tx_pub, 3).unwrap();
@@ -202,7 +234,14 @@ mod tests {
         let (otk, tag) = derive_one_time_key(&shared, &addr.spend_public, 0).unwrap();
 
         // View key alone detects…
-        assert!(matches_output(&keys.view_secret, &addr.spend_public, &tx_pub, 0, &otk, tag));
+        assert!(matches_output(
+            &keys.view_secret,
+            &addr.spend_public,
+            &tx_pub,
+            0,
+            &otk,
+            tag
+        ));
         // …but a wrong spend secret does not produce the right key.
         let (other, _) = keypair();
         let fake = StealthKeys {

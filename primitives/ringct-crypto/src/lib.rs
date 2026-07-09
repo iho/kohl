@@ -101,7 +101,12 @@ pub mod native {
     /// a canonical scalar.
     pub fn commit(amount: u64, blinding: &[u8; 32]) -> Option<[u8; 32]> {
         let x = Option::<Scalar>::from(Scalar::from_canonical_bytes(*blinding))?;
-        Some(pc_gens().commit(Scalar::from(amount), x).compress().to_bytes())
+        Some(
+            pc_gens()
+                .commit(Scalar::from(amount), x)
+                .compress()
+                .to_bytes(),
+        )
     }
 
     /// Commitment to a public amount with zero blinding (coinbase outputs).
@@ -137,8 +142,12 @@ pub mod native {
         if ins.is_empty() || outs.is_empty() {
             return false;
         }
-        let in_sum = ins.iter().fold(RistrettoPoint::identity(), |acc, p| acc + p);
-        let out_sum = outs.iter().fold(RistrettoPoint::identity(), |acc, p| acc + p);
+        let in_sum = ins
+            .iter()
+            .fold(RistrettoPoint::identity(), |acc, p| acc + p);
+        let out_sum = outs
+            .iter()
+            .fold(RistrettoPoint::identity(), |acc, p| acc + p);
         in_sum == out_sum + pc_gens().B * Scalar::from(fee)
     }
 
@@ -160,7 +169,13 @@ pub mod native {
         };
         let mut transcript = Transcript::new(TRANSCRIPT_LABEL);
         proof
-            .verify_multiple(bp_gens(), pc_gens(), &mut transcript, &points, RANGE_PROOF_BITS)
+            .verify_multiple(
+                bp_gens(),
+                pc_gens(),
+                &mut transcript,
+                &points,
+                RANGE_PROOF_BITS,
+            )
             .is_ok()
     }
 
@@ -174,7 +189,10 @@ pub mod native {
     /// A random one-time keypair `(x, P = x·G)` (tests and wallets).
     pub fn random_secret_key() -> ([u8; 32], [u8; 32]) {
         let x = Scalar::random(&mut rand::rngs::OsRng);
-        (x.to_bytes(), (RISTRETTO_BASEPOINT_POINT * x).compress().to_bytes())
+        (
+            x.to_bytes(),
+            (RISTRETTO_BASEPOINT_POINT * x).compress().to_bytes(),
+        )
     }
 
     /// The blinding that balances a transaction:
@@ -194,10 +212,7 @@ pub mod native {
     /// Produce one aggregated proof for `values` under `blindings`, padding
     /// to the next power of two with (0, 0). Returns the proof bytes and the
     /// commitments for the *real* values (in order).
-    pub fn prove_range(
-        values: &[u64],
-        blindings: &[[u8; 32]],
-    ) -> Option<(Vec<u8>, Vec<[u8; 32]>)> {
+    pub fn prove_range(values: &[u64], blindings: &[[u8; 32]]) -> Option<(Vec<u8>, Vec<[u8; 32]>)> {
         if values.is_empty() || values.len() != blindings.len() || values.len() > MAX_AGGREGATED {
             return None;
         }
@@ -309,7 +324,9 @@ pub trait RingctCrypto {
     }
 
     /// Host-only key image of a one-time secret.
-    fn key_image_v1(secret: PassFatPointerAndRead<&[u8]>) -> AllocateAndReturnPointer<[u8; 32], 32> {
+    fn key_image_v1(
+        secret: PassFatPointerAndRead<&[u8]>,
+    ) -> AllocateAndReturnPointer<[u8; 32], 32> {
         let mut sk = [0u8; 32];
         if secret.len() == 32 {
             sk.copy_from_slice(secret);
@@ -484,8 +501,7 @@ mod tests {
         assert!(!verify_range_proof(&proof, &other.concat()));
 
         // Reordered commitments fail (transcript binds order).
-        let reordered =
-            [commitments[1], commitments[0], commitments[2]].concat();
+        let reordered = [commitments[1], commitments[0], commitments[2]].concat();
         assert!(!verify_range_proof(&proof, &reordered));
     }
 

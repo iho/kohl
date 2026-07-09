@@ -94,7 +94,11 @@ fn built_transfer_is_chain_valid() {
     // Alice owns index 5 (200k); everything else is a decoy.
     let mut set = BTreeMap::new();
     for gi in 0..8u64 {
-        let out = if gi == 5 { mint_to(&alice.address, gi, 200_000) } else { random_decoy(gi) };
+        let out = if gi == 5 {
+            mint_to(&alice.address, gi, 200_000)
+        } else {
+            random_decoy(gi)
+        };
         set.insert(gi, out);
     }
     let outputs: Vec<(u64, StoredOut)> = set.iter().map(|(k, v)| (*k, v.clone())).collect();
@@ -115,7 +119,9 @@ fn built_transfer_is_chain_valid() {
 
     let fee = 1_000;
     let send = 120_000;
-    let tx = alice.build_transfer(input, &decoys, &bob.address, send, fee).unwrap();
+    let tx = alice
+        .build_transfer(input, &decoys, &bob.address, send, fee)
+        .unwrap();
 
     // Shape.
     assert_eq!(tx.inputs.len(), 1);
@@ -161,7 +167,11 @@ fn tampering_a_built_transfer_is_rejected() {
     let bob = Wallet::from_seed(&[9u8; 32]);
     let mut set = BTreeMap::new();
     for gi in 0..4u64 {
-        let out = if gi == 0 { mint_to(&alice.address, gi, 100_000) } else { random_decoy(gi) };
+        let out = if gi == 0 {
+            mint_to(&alice.address, gi, 100_000)
+        } else {
+            random_decoy(gi)
+        };
         set.insert(gi, out);
     }
     let outputs: Vec<(u64, StoredOut)> = set.iter().map(|(k, v)| (*k, v.clone())).collect();
@@ -174,7 +184,9 @@ fn tampering_a_built_transfer_is_rejected() {
             commitment: set[gi].commitment,
         })
         .collect();
-    let tx = alice.build_transfer(&input, &decoys, &bob.address, 50_000, 1_000).unwrap();
+    let tx = alice
+        .build_transfer(&input, &decoys, &bob.address, 50_000, 1_000)
+        .unwrap();
     assert!(chain_accepts(&tx, &set));
 
     // Redirect an output after signing → CLSAG breaks.
@@ -262,8 +274,9 @@ fn multi_input_transfer_is_chain_valid() {
 fn insufficient_funds_is_reported() {
     let alice = Wallet::from_seed(&[1u8; 32]);
     let bob = Wallet::from_seed(&[9u8; 32]);
-    let set: Vec<(u64, StoredOut)> =
-        (0..4u64).map(|gi| (gi, mint_to(&alice.address, gi, 10_000))).collect();
+    let set: Vec<(u64, StoredOut)> = (0..4u64)
+        .map(|gi| (gi, mint_to(&alice.address, gi, 10_000)))
+        .collect();
     let input = alice.scan(&set).remove(0);
     let decoys: Vec<RingMember> = set[1..4]
         .iter()
@@ -273,6 +286,8 @@ fn insufficient_funds_is_reported() {
             commitment: o.commitment,
         })
         .collect();
-    let err = alice.build_transfer(&input, &decoys, &bob.address, 10_000, 1_000).unwrap_err();
+    let err = alice
+        .build_transfer(&input, &decoys, &bob.address, 10_000, 1_000)
+        .unwrap_err();
     assert!(matches!(err, WalletError::NotEnoughFunds { .. }));
 }

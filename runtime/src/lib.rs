@@ -84,7 +84,10 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 
 #[cfg(feature = "std")]
 pub fn native_version() -> NativeVersion {
-    NativeVersion { runtime_version: VERSION, can_author_with: Default::default() }
+    NativeVersion {
+        runtime_version: VERSION,
+        can_author_with: Default::default(),
+    }
 }
 
 pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
@@ -223,7 +226,11 @@ fn get_genesis_preset(id: &sp_genesis_builder::PresetId) -> Option<Vec<u8>> {
         "mainnet" => kohl_genesis(50_000_000),
         _ => return None,
     };
-    Some(serde_json::to_string(&value).expect("preset serializes").into_bytes())
+    Some(
+        serde_json::to_string(&value)
+            .expect("preset serializes")
+            .into_bytes(),
+    )
 }
 
 // ---- Runtime APIs -------------------------------------------------------

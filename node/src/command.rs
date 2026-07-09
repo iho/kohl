@@ -35,7 +35,9 @@ impl SubstrateCli for Cli {
             "dev" | "" => Box::new(chain_spec::development_chain_spec()?),
             "kohl-ash" | "local" => Box::new(chain_spec::local_testnet_chain_spec()?),
             "kohl" | "mainnet" => Box::new(chain_spec::mainnet_chain_spec()?),
-            path => Box::new(chain_spec::ChainSpec::from_json_file(std::path::PathBuf::from(path))?),
+            path => Box::new(chain_spec::ChainSpec::from_json_file(
+                std::path::PathBuf::from(path),
+            )?),
         })
     }
 }
@@ -53,32 +55,46 @@ pub fn run() -> sc_cli::Result<()> {
         Some(Subcommand::CheckBlock(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, import_queue, .. } =
-                    service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    import_queue,
+                    ..
+                } = service::new_partial(&config)?;
                 Ok((cmd.run(client, import_queue), task_manager))
             })
         }
         Some(Subcommand::ExportBlocks(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, .. } =
-                    service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    ..
+                } = service::new_partial(&config)?;
                 Ok((cmd.run(client, config.database), task_manager))
             })
         }
         Some(Subcommand::ExportState(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, .. } =
-                    service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    ..
+                } = service::new_partial(&config)?;
                 Ok((cmd.run(client, config.chain_spec), task_manager))
             })
         }
         Some(Subcommand::ImportBlocks(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, import_queue, .. } =
-                    service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    import_queue,
+                    ..
+                } = service::new_partial(&config)?;
                 Ok((cmd.run(client, import_queue), task_manager))
             })
         }
@@ -89,8 +105,12 @@ pub fn run() -> sc_cli::Result<()> {
         Some(Subcommand::Revert(cmd)) => {
             let runner = cli.create_runner(cmd)?;
             runner.async_run(|config| {
-                let PartialComponents { client, task_manager, backend, .. } =
-                    service::new_partial(&config)?;
+                let PartialComponents {
+                    client,
+                    task_manager,
+                    backend,
+                    ..
+                } = service::new_partial(&config)?;
                 // No justification/aux revert hook: PoW has no GRANDPA.
                 let aux_revert = Box::new(|_, _, _| Ok(()));
                 Ok((cmd.run(client, backend, Some(aux_revert)), task_manager))
@@ -152,7 +172,9 @@ pub fn run() -> sc_cli::Result<()> {
                 match config.network.network_backend {
                     sc_network::config::NetworkBackendType::Libp2p => service::new_full::<
                         sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>,
-                    >(config, mining)
+                    >(
+                        config, mining
+                    )
                     .map_err(sc_cli::Error::Service),
                     sc_network::config::NetworkBackendType::Litep2p => {
                         service::new_full::<sc_network::Litep2pNetworkBackend>(config, mining)

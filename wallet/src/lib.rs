@@ -86,7 +86,10 @@ impl Wallet {
     /// Scan `(global_index, output)` pairs and return the ones we own, with
     /// everything needed to spend them.
     pub fn scan(&self, outputs: &[(u64, StoredOut)]) -> Vec<OwnedOutput> {
-        outputs.iter().filter_map(|(gi, out)| self.try_own(*gi, out)).collect()
+        outputs
+            .iter()
+            .filter_map(|(gi, out)| self.try_own(*gi, out))
+            .collect()
     }
 
     fn try_own(&self, global_index: u64, out: &StoredOut) -> Option<OwnedOutput> {
@@ -181,7 +184,10 @@ impl Wallet {
         })?;
         let total_needed = send_amount.checked_add(fee).ok_or(WalletError::Bounds)?;
         if total_in < total_needed {
-            return Err(WalletError::NotEnoughFunds { needed: total_needed, have: total_in });
+            return Err(WalletError::NotEnoughFunds {
+                needed: total_needed,
+                have: total_in,
+            });
         }
         let change = total_in - total_needed;
 
@@ -192,8 +198,9 @@ impl Wallet {
 
         // Pseudo blindings: free for first n−1 inputs; last closes
         // Σ C' = Σ C_out  (i.e. Σ x' = b0 + b1).
-        let mut free: Vec<[u8; 32]> =
-            (0..inputs.len().saturating_sub(1)).map(|_| crypto::random_blinding()).collect();
+        let mut free: Vec<[u8; 32]> = (0..inputs.len().saturating_sub(1))
+            .map(|_| crypto::random_blinding())
+            .collect();
         let last = crypto::balancing_blinding(&[b0, b1], &free)
             .ok_or(WalletError::Crypto("blinding sum"))?;
         free.push(last);
@@ -209,8 +216,9 @@ impl Wallet {
             pseudo_commitment: [u8; 32],
         }
         let mut prepared = Vec::with_capacity(inputs.len());
-        for (input, (decoys, pb)) in
-            inputs.iter().zip(rings_decoys.iter().zip(pseudo_blindings.iter()))
+        for (input, (decoys, pb)) in inputs
+            .iter()
+            .zip(rings_decoys.iter().zip(pseudo_blindings.iter()))
         {
             if decoys.is_empty() {
                 return Err(WalletError::RingTooSmall);
@@ -304,10 +312,17 @@ impl Wallet {
             stealth::derive_one_time_key(&shared, &recipient.spend_public, li)
                 .ok_or(WalletError::Crypto("one-time key"))?;
         let blinding = stealth::derive_blinding(&shared, li);
-        let commitment =
-            crypto::commit(amount, &blinding).ok_or(WalletError::Crypto("commit"))?;
+        let commitment = crypto::commit(amount, &blinding).ok_or(WalletError::Crypto("commit"))?;
         let payload = bounded(stealth::mask_amount(&shared, li, amount).to_vec())?;
-        Ok((Output { one_time_key, commitment, view_tag, payload }, blinding))
+        Ok((
+            Output {
+                one_time_key,
+                commitment,
+                view_tag,
+                payload,
+            },
+            blinding,
+        ))
     }
 }
 

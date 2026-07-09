@@ -187,18 +187,16 @@ pub fn sign(
         signature.extend_from_slice(&si.to_bytes());
     }
     signature.extend_from_slice(&aux_image);
-    Some(ClsagResult { signature, key_image, pseudo_commitment: pseudo })
+    Some(ClsagResult {
+        signature,
+        key_image,
+        pseudo_commitment: pseudo,
+    })
 }
 
 /// Verify a CLSAG. Total-decoding strict: every scalar must be canonical,
 /// every point must decompress, `I` must not be the identity.
-pub fn verify(
-    msg: &[u8],
-    ring_blob: &[u8],
-    pseudo: &[u8],
-    key_image: &[u8],
-    sig: &[u8],
-) -> bool {
+pub fn verify(msg: &[u8], ring_blob: &[u8], pseudo: &[u8], key_image: &[u8], sig: &[u8]) -> bool {
     if msg.len() != 32 || pseudo.len() != 32 || key_image.len() != 32 {
         return false;
     }
@@ -283,9 +281,18 @@ mod tests {
                 let (ring, secret) = test_ring(n, l, 1_000, &blinding);
                 let pseudo_blinding = random_blinding();
                 let res = sign(&msg, &ring, l, &secret, &blinding, &pseudo_blinding).unwrap();
-                assert!(verify(&msg, &ring, &res.pseudo_commitment, &res.key_image, &res.signature));
+                assert!(verify(
+                    &msg,
+                    &ring,
+                    &res.pseudo_commitment,
+                    &res.key_image,
+                    &res.signature
+                ));
                 // The pseudo commitment really is commit(amount, pseudo_blinding).
-                assert_eq!(res.pseudo_commitment, commit(1_000, &pseudo_blinding).unwrap());
+                assert_eq!(
+                    res.pseudo_commitment,
+                    commit(1_000, &pseudo_blinding).unwrap()
+                );
             }
         }
     }
@@ -314,20 +321,50 @@ mod tests {
         let res = sign(&msg, &ring, 1, &secret, &blinding, &pseudo_blinding).unwrap();
 
         // Wrong message.
-        assert!(!verify(&[0u8; 32], &ring, &res.pseudo_commitment, &res.key_image, &res.signature));
+        assert!(!verify(
+            &[0u8; 32],
+            &ring,
+            &res.pseudo_commitment,
+            &res.key_image,
+            &res.signature
+        ));
         // Tampered scalar.
         let mut bad = res.signature.clone();
         bad[40] ^= 1;
-        assert!(!verify(&msg, &ring, &res.pseudo_commitment, &res.key_image, &bad));
+        assert!(!verify(
+            &msg,
+            &ring,
+            &res.pseudo_commitment,
+            &res.key_image,
+            &bad
+        ));
         // Substituted key image (decouples linkability).
         let other_ki = key_image(&random_secret_key().0).unwrap();
-        assert!(!verify(&msg, &ring, &res.pseudo_commitment, &other_ki, &res.signature));
+        assert!(!verify(
+            &msg,
+            &ring,
+            &res.pseudo_commitment,
+            &other_ki,
+            &res.signature
+        ));
         // Pseudo commitment to a different amount.
         let wrong_pseudo = commit(78, &pseudo_blinding).unwrap();
-        assert!(!verify(&msg, &ring, &wrong_pseudo, &res.key_image, &res.signature));
+        assert!(!verify(
+            &msg,
+            &ring,
+            &wrong_pseudo,
+            &res.key_image,
+            &res.signature
+        ));
         // Identity key image.
         let identity = RistrettoPoint::identity().compress().to_bytes();
-        assert!(!verify(&msg, &ring, &res.pseudo_commitment, &identity, &res.signature));
+        assert!(!verify(
+            &msg,
+            &ring,
+            &res.pseudo_commitment,
+            &identity,
+            &res.signature
+        ));
     }
 
     #[test]
@@ -335,10 +372,26 @@ mod tests {
         let blinding = random_blinding();
         let (ring, _secret) = test_ring(4, 1, 5, &blinding);
         let (wrong_secret, _) = random_secret_key();
-        assert!(sign(&[0u8; 32], &ring, 1, &wrong_secret, &blinding, &random_blinding()).is_none());
+        assert!(sign(
+            &[0u8; 32],
+            &ring,
+            1,
+            &wrong_secret,
+            &blinding,
+            &random_blinding()
+        )
+        .is_none());
         // Right key, wrong claimed position.
         let (ring2, secret2) = test_ring(4, 3, 5, &blinding);
-        assert!(sign(&[0u8; 32], &ring2, 0, &secret2, &blinding, &random_blinding()).is_none());
+        assert!(sign(
+            &[0u8; 32],
+            &ring2,
+            0,
+            &secret2,
+            &blinding,
+            &random_blinding()
+        )
+        .is_none());
         let _ = ring;
     }
 
@@ -351,10 +404,22 @@ mod tests {
         let in_blinding = [0u8; 32]; // coinbase input
         let (ring, secret) = test_ring(2, 0, amount, &in_blinding);
         let pseudo_blinding = random_blinding();
-        let res = sign(&[3u8; 32], &ring, 0, &secret, &in_blinding, &pseudo_blinding).unwrap();
+        let res = sign(
+            &[3u8; 32],
+            &ring,
+            0,
+            &secret,
+            &in_blinding,
+            &pseudo_blinding,
+        )
+        .unwrap();
 
         let out_blinding = pseudo_blinding; // single output absorbs it all
         let out = commit(amount - fee, &out_blinding).unwrap();
-        assert!(crate::native::verify_balance(&res.pseudo_commitment, &out, fee));
+        assert!(crate::native::verify_balance(
+            &res.pseudo_commitment,
+            &out,
+            fee
+        ));
     }
 }

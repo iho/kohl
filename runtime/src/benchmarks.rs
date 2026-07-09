@@ -5,6 +5,6 @@
 #![cfg(feature = "runtime-benchmarks")]
 
 frame_benchmarking::define_benchmarks!(
-	[pallet_ringct, RingCt]
-	[pallet_timestamp, Timestamp]
+    [pallet_ringct, RingCt]
+    [pallet_timestamp, Timestamp]
 );

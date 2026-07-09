@@ -156,7 +156,13 @@ mod tests {
         let h = BlakeHasher;
         let seal = mine(&h, b"pre", b"seed", U256::one(), 0, 10).unwrap();
         assert_eq!(seal.nonce, 0); // difficulty 1 → first nonce wins
-        assert!(verify_seal(&h, b"pre", b"seed", &seal.encode_seal(), U256::one()));
+        assert!(verify_seal(
+            &h,
+            b"pre",
+            b"seed",
+            &seal.encode_seal(),
+            U256::one()
+        ));
     }
 
     #[test]
@@ -171,7 +177,13 @@ mod tests {
             start += 1000;
         };
         assert!(hash_meets_difficulty(&seal.work, difficulty));
-        assert!(verify_seal(&h, b"block", b"seed", &seal.encode_seal(), difficulty));
+        assert!(verify_seal(
+            &h,
+            b"block",
+            b"seed",
+            &seal.encode_seal(),
+            difficulty
+        ));
     }
 
     #[test]
@@ -191,7 +203,13 @@ mod tests {
         // Wrong nonce (work no longer matches recomputation).
         let mut forged = seal.clone();
         forged.nonce = forged.nonce.wrapping_add(1);
-        assert!(!verify_seal(&h, b"x", b"s", &forged.encode_seal(), difficulty));
+        assert!(!verify_seal(
+            &h,
+            b"x",
+            b"s",
+            &forged.encode_seal(),
+            difficulty
+        ));
 
         // Different pre-hash / seed → recomputed work differs.
         assert!(!verify_seal(&h, b"y", b"s", &good, difficulty));

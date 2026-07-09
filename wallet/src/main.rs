@@ -64,7 +64,9 @@ fn parse_seed(s: &str) -> Result<[u8; 32], Box<dyn Error>> {
 }
 
 fn parse_address(s: &str) -> Result<StealthAddress, Box<dyn Error>> {
-    let hexpart = s.strip_prefix("kohl:").ok_or("address must start with 'kohl:'")?;
+    let hexpart = s
+        .strip_prefix("kohl:")
+        .ok_or("address must start with 'kohl:'")?;
     let bytes = hex::decode(hexpart)?;
     if bytes.len() != 64 {
         return Err("address must encode 64 bytes (view||spend)".into());
@@ -73,7 +75,10 @@ fn parse_address(s: &str) -> Result<StealthAddress, Box<dyn Error>> {
     let mut spend_public = [0u8; 32];
     view_public.copy_from_slice(&bytes[..32]);
     spend_public.copy_from_slice(&bytes[32..]);
-    Ok(StealthAddress { view_public, spend_public })
+    Ok(StealthAddress {
+        view_public,
+        spend_public,
+    })
 }
 
 fn fetch_all_outputs(
@@ -137,7 +142,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("balance: {} atomic units", total);
         }
 
-        Command::Send { seed, rpc, to, amount, ring } => {
+        Command::Send {
+            seed,
+            rpc,
+            to,
+            amount,
+            ring,
+        } => {
             if ring < 2 {
                 return Err("ring size must be at least 2 (chain requires 16)".into());
             }
@@ -156,8 +167,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             // Fee estimate scales with input count; start with 1-in/2-out size.
             let est_fee = fee_per_byte.saturating_mul(3_000);
             let needed = amount.saturating_add(est_fee);
-            let mut mature: Vec<_> =
-                owned.into_iter().filter(|o| is_mature(o, best)).collect();
+            let mut mature: Vec<_> = owned.into_iter().filter(|o| is_mature(o, best)).collect();
             // Prefer larger outputs first (fewer inputs).
             mature.sort_by_key(|o| std::cmp::Reverse(o.amount));
             let mut selected = Vec::new();
@@ -170,17 +180,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             if total < needed {
-                return Err(format!(
-                    "not enough mature funds: need {needed}, have {total}"
-                )
-                .into());
+                return Err(format!("not enough mature funds: need {needed}, have {total}").into());
             }
             // Re-estimate fee for multi-input size (~1.5 KiB per extra input).
             let est_fee = fee_per_byte
                 .saturating_mul(3_000u64.saturating_add(1_500 * (selected.len() as u64 - 1)));
             if total < amount.saturating_add(est_fee) {
-                return Err("selected inputs cover amount but not re-estimated fee; try again"
-                    .into());
+                return Err(
+                    "selected inputs cover amount but not re-estimated fee; try again".into(),
+                );
             }
 
             let spend_set: std::collections::BTreeSet<u64> =
@@ -209,8 +217,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 rng_seed = rng_seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
             }
 
-            let tx =
-                wallet.build_transfer_multi(&selected, &rings, &dest, amount, est_fee)?;
+            let tx = wallet.build_transfer_multi(&selected, &rings, &dest, amount, est_fee)?;
             let spent: Vec<u64> = selected.iter().map(|o| o.global_index).collect();
             let call = kohl_runtime::RuntimeCall::RingCt(pallet_ringct::Call::transfer { tx });
             // General transaction with AuthorizeCall so `#[pallet::authorize]`

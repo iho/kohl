@@ -19,5 +19,5 @@ pub use mining::RandomXHasher;
 
 #[cfg(feature = "node")]
 pub use algorithm::{
-	seed_bytes, seed_for_parent, seed_height, KohlPow, DEFAULT_SEED, EPOCH_LENGTH, SEED_LAG,
+    seed_bytes, seed_for_parent, seed_height, KohlPow, DEFAULT_SEED, EPOCH_LENGTH, SEED_LAG,
 };

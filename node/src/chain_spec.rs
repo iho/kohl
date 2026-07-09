@@ -8,7 +8,8 @@ use sc_service::ChainType;
 pub type ChainSpec = sc_service::GenericChainSpec;
 
 fn wasm() -> Result<&'static [u8], String> {
-    WASM_BINARY.ok_or_else(|| "kohl runtime WASM not available (build without SKIP_WASM_BUILD)".into())
+    WASM_BINARY
+        .ok_or_else(|| "kohl runtime WASM not available (build without SKIP_WASM_BUILD)".into())
 }
 
 pub fn development_chain_spec() -> Result<ChainSpec, String> {

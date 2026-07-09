@@ -14,7 +14,9 @@ type R<T> = Result<T, Box<dyn Error>>;
 
 impl RpcClient {
     pub fn new(url: &str) -> Self {
-        Self { url: url.to_string() }
+        Self {
+            url: url.to_string(),
+        }
     }
 
     fn call(&self, method: &str, params: serde_json::Value) -> R<serde_json::Value> {
@@ -23,7 +25,10 @@ impl RpcClient {
         if let Some(err) = resp.get("error") {
             return Err(format!("rpc error: {err}").into());
         }
-        Ok(resp.get("result").cloned().unwrap_or(serde_json::Value::Null))
+        Ok(resp
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
     }
 
     /// Call a runtime API method (`Trait_method`) with SCALE-encoded args and
@@ -37,7 +42,10 @@ impl RpcClient {
 
     pub fn best_number(&self) -> R<u32> {
         let header = self.call("chain_getHeader", json!([]))?;
-        let num = header.get("number").and_then(|n| n.as_str()).ok_or("no header number")?;
+        let num = header
+            .get("number")
+            .and_then(|n| n.as_str())
+            .ok_or("no header number")?;
         Ok(u32::from_str_radix(num.trim_start_matches("0x"), 16)?)
     }
 
