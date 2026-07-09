@@ -37,11 +37,14 @@ The WASM runtime build needs `--allow-undefined` passed to the wasm linker (so t
 and `ringct_crypto` host functions stay as imports); this is wired in `.cargo/config.toml`
 via `WASM_BUILD_RUSTFLAGS`.
 
-**Remaining work**: `frame-benchmarking` weights (current weights are conservative
-placeholders), an epoch-rotating RandomX seed (the dev node uses a fixed seed with the
-BLAKE2b fallback hasher), a persistent CLI-configured miner address (the dev node generates
-a throwaway one per run), P2P privacy (Tor/Dandelion++), and the migration off the deprecated
-`ValidateUnsigned` to `#[pallet::authorize]`.
+**Remaining work**: replace engineered `WeightInfo` with `frame-benchmarking`
+machine numbers; P2P privacy (Tor/Dandelion++); external crypto audit / fuzzing
+(Phase 5).
+
+**Recently landed**: `WeightInfo` + scaling formulas; one-time key / tx-pubkey
+point hygiene (`is_valid_point_v1`); `--mining-seed`; epoch PoW seed; wallet
+decoy sampler; `#[pallet::authorize]`; RandomX epoch rebuild; CI workflow;
+learning docs.
 
 ---
 

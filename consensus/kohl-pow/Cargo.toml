@@ -21,6 +21,7 @@ sp-runtime = { workspace = true, optional = true, features = ["std"] }
 sp-consensus-pow = { workspace = true, optional = true, features = ["std"] }
 sc-consensus-pow = { workspace = true, optional = true }
 sc-client-api = { workspace = true, optional = true }
+sp-blockchain = { workspace = true, optional = true }
 kohl-runtime-api = { workspace = true, optional = true, features = ["std"] }
 
 [features]
@@ -37,5 +38,6 @@ node = [
     "dep:sp-consensus-pow",
     "dep:sc-consensus-pow",
     "dep:sc-client-api",
+    "dep:sp-blockchain",
     "dep:kohl-runtime-api",
 ]

@@ -15,6 +15,7 @@ clap = { workspace = true }
 futures = { workspace = true }
 async-trait = "0.1"
 log = "0.4"
+hex = "0.4"
 jsonrpsee = { workspace = true }
 codec = { workspace = true, features = ["std"] }
 

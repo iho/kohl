@@ -3925,6 +3925,7 @@ dependencies = [
  "clap",
  "frame-system",
  "futures",
+ "hex",
  "jsonrpsee",
  "kohl-pow",
  "kohl-runtime",
@@ -3968,6 +3969,7 @@ dependencies = [
  "sc-client-api",
  "sc-consensus-pow",
  "sp-api",
+ "sp-blockchain",
  "sp-consensus-pow",
  "sp-core",
  "sp-runtime",
@@ -4020,6 +4022,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "frame-support",
+ "frame-system",
  "hex",
  "kohl-runtime",
  "pallet-ringct",
@@ -4029,6 +4032,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp-core",
+ "sp-runtime",
  "ureq",
 ]
 

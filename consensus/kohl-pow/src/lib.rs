@@ -18,4 +18,6 @@ pub use mining::{hash_meets_difficulty, mine, verify_seal, BlakeHasher, Hasher, 
 pub use mining::RandomXHasher;
 
 #[cfg(feature = "node")]
-pub use algorithm::KohlPow;
+pub use algorithm::{
+	seed_bytes, seed_for_parent, seed_height, KohlPow, DEFAULT_SEED, EPOCH_LENGTH, SEED_LAG,
+};

@@ -110,6 +110,19 @@ pub mod native {
             .to_bytes()
     }
 
+    /// True iff `bytes` is a canonical compressed Ristretto point that is
+    /// **not** the identity. Used to reject garbage one-time keys at mint time
+    /// so they cannot poison future rings as decoys.
+    pub fn is_valid_point(bytes: &[u8; 32]) -> bool {
+        let Ok(c) = CompressedRistretto::from_slice(bytes) else {
+            return false;
+        };
+        match c.decompress() {
+            Some(p) => p != RistrettoPoint::identity(),
+            None => false,
+        }
+    }
+
     /// Consensus balance equation: Σ inputs == Σ outputs + fee·B.
     /// Rejects any non-canonical / non-decompressible point.
     pub fn verify_balance(inputs: &[u8], outputs: &[u8], fee: u64) -> bool {
@@ -253,6 +266,16 @@ pub trait RingctCrypto {
     ) -> bool {
         clsag::verify(msg, ring, pseudo_commitment, key_image, signature)
     }
+
+    /// Canonical non-identity Ristretto point? Used for one-time key hygiene.
+    fn is_valid_point_v1(point: PassFatPointerAndRead<&[u8]>) -> bool {
+        if point.len() != 32 {
+            return false;
+        }
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(point);
+        native::is_valid_point(&bytes)
+    }
 }
 
 #[cfg(test)]
@@ -310,5 +333,13 @@ mod tests {
         assert!(!verify_range_proof(&[], &[]));
         assert!(!verify_balance(&[0u8; 31], &[0u8; 32], 0)); // bad length
         assert!(!verify_balance(&[0xffu8; 32], &value_commitment(1), 0)); // non-canonical point
+    }
+
+    #[test]
+    fn is_valid_point_accepts_keys_rejects_garbage() {
+        let (_sk, pk) = random_secret_key();
+        assert!(is_valid_point(&pk));
+        assert!(!is_valid_point(&[0u8; 32])); // identity
+        assert!(!is_valid_point(&[0xff; 32])); // non-canonical
     }
 }

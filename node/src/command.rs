@@ -96,19 +96,39 @@ pub fn run() -> sc_cli::Result<()> {
             })
         }
         None => {
+            let mining_seed = parse_mining_seed(cli.mining_seed.as_deref())?;
             let runner = cli.create_runner(&cli.run)?;
             runner.run_node_until_exit(|config| async move {
+                let mining = service::MiningConfig { mining_seed };
                 match config.network.network_backend {
                     sc_network::config::NetworkBackendType::Libp2p => service::new_full::<
                         sc_network::NetworkWorker<Block, <Block as BlockT>::Hash>,
-                    >(config)
+                    >(config, mining)
                     .map_err(sc_cli::Error::Service),
                     sc_network::config::NetworkBackendType::Litep2p => {
-                        service::new_full::<sc_network::Litep2pNetworkBackend>(config)
+                        service::new_full::<sc_network::Litep2pNetworkBackend>(config, mining)
                             .map_err(sc_cli::Error::Service)
                     }
                 }
             })
         }
     }
+}
+
+/// Parse `--mining-seed` as 32 raw bytes (64 hex chars, optional 0x).
+fn parse_mining_seed(raw: Option<&str>) -> sc_cli::Result<Option<[u8; 32]>> {
+    let Some(s) = raw else {
+        return Ok(None);
+    };
+    let hex = s.trim().trim_start_matches("0x");
+    let bytes = hex::decode(hex).map_err(|e| sc_cli::Error::Input(format!("mining-seed: {e}")))?;
+    if bytes.len() != 32 {
+        return Err(sc_cli::Error::Input(format!(
+            "mining-seed must be 32 bytes (64 hex chars), got {}",
+            bytes.len()
+        )));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&bytes);
+    Ok(Some(seed))
 }

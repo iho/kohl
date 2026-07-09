@@ -3,7 +3,7 @@
 
 use clap::{Parser, Subcommand};
 use codec::Encode;
-use kohl_wallet::{rpc::RpcClient, RingMember, Wallet};
+use kohl_wallet::{rpc::RpcClient, Wallet};
 use ringct_crypto::stealth::StealthAddress;
 use std::error::Error;
 
@@ -120,30 +120,42 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .max_by_key(|o| o.amount)
                 .ok_or("no single mature output covers the amount + fee")?;
 
-            // Decoys: mature outputs other than the input.
-            let decoys: Vec<RingMember> = all
+            // Decoys: gamma/age-biased sample of mature outputs (not first-N).
+            let candidates: Vec<kohl_wallet::DecoyCandidate> = all
                 .iter()
                 .filter(|(gi, o)| *gi != input.global_index && output_mature(o, best))
-                .take(ring - 1)
-                .map(|(gi, o)| RingMember {
+                .map(|(gi, o)| kohl_wallet::DecoyCandidate {
                     global_index: *gi,
                     one_time_key: o.one_time_key,
                     commitment: o.commitment,
+                    height: o.height,
                 })
                 .collect();
-            if decoys.len() < ring - 1 {
-                return Err(format!(
-                    "need {} mature decoys for a ring of {}, found {}",
-                    ring - 1,
-                    ring,
-                    decoys.len()
-                )
-                .into());
-            }
+            let need = ring - 1;
+            let rng_seed = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(1);
+            let decoys = kohl_wallet::sample_decoys(&candidates, need, best, rng_seed)
+                .map_err(|e| e.to_string())?;
 
             let tx = wallet.build_transfer(input, &decoys, &dest, amount, est_fee)?;
             let call = kohl_runtime::RuntimeCall::RingCt(pallet_ringct::Call::transfer { tx });
-            let xt = kohl_runtime::UncheckedExtrinsic::new_bare(call);
+            // General transaction with AuthorizeCall so `#[pallet::authorize]`
+            // can set origin to Authorized (bare extrinsics skip tx extensions).
+            let xt = kohl_runtime::UncheckedExtrinsic::new_transaction(
+                call,
+                (
+                    frame_system::AuthorizeCall::<kohl_runtime::Runtime>::new(),
+                    frame_system::CheckNonZeroSender::<kohl_runtime::Runtime>::new(),
+                    frame_system::CheckSpecVersion::<kohl_runtime::Runtime>::new(),
+                    frame_system::CheckTxVersion::<kohl_runtime::Runtime>::new(),
+                    frame_system::CheckGenesis::<kohl_runtime::Runtime>::new(),
+                    frame_system::CheckEra::<kohl_runtime::Runtime>::from(sp_runtime::generic::Era::Immortal),
+                    frame_system::CheckNonce::<kohl_runtime::Runtime>::from(0),
+                    frame_system::CheckWeight::<kohl_runtime::Runtime>::new(),
+                ),
+            );
             let hash = client.submit_extrinsic(&xt.encode())?;
             println!("submitted transfer spending #{}: {}", input.global_index, hash);
         }

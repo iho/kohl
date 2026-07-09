@@ -10,7 +10,10 @@ use pallet_ringct::{Output, RingInput, StoredOutput, TransferTx};
 use ringct_crypto::{clsag, native as crypto, stealth};
 use ringct_primitives::MAX_OUTPUTS;
 
+pub mod decoy;
 pub mod rpc;
+
+pub use decoy::{sample_decoys, DecoyCandidate, DecoyError};
 
 pub type BlockNumber = u32;
 pub type StoredOut = StoredOutput<BlockNumber>;

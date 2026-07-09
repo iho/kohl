@@ -25,6 +25,7 @@ impl pallet_ringct::Config for Test {
     type SpendableAge = ConstU64<10>;
     type CoinbaseMaturity = ConstU64<60>;
     type MinFeePerByte = ConstU64<1>;
+    type WeightInfo = ();
 }
 
 pub fn new_test_ext() -> sp_io::TestExternalities {

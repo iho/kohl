@@ -87,11 +87,15 @@ pub fn native_version() -> NativeVersion {
 pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
 pub type Block = generic::Block<Header, UncheckedExtrinsic>;
 
-/// Transaction extension. The chain has no signed user transactions (every
-/// transfer is an unsigned, self-authenticating RingCT extrinsic and the
-/// coinbase is an inherent), so this only carries the format-level checks the
-/// executive needs; there is no fee-charging or nonce economics here.
+/// Transaction extension pipeline.
+///
+/// RingCT transfers are **general** (unsigned) extrinsics authorized by
+/// `#[pallet::authorize]` via [`frame_system::AuthorizeCall`] — the CLSAG is
+/// the proof of authority. Coinbase is a bare inherent (`ensure_none`), not
+/// a general transaction. There is no fee-charging extension: fees live
+/// inside the RingCT balance equation.
 pub type TxExtension = (
+    frame_system::AuthorizeCall<Runtime>,
     frame_system::CheckNonZeroSender<Runtime>,
     frame_system::CheckSpecVersion<Runtime>,
     frame_system::CheckTxVersion<Runtime>,
@@ -191,6 +195,7 @@ impl pallet_ringct::Config for Runtime {
     type SpendableAge = ConstU32<10>;
     type CoinbaseMaturity = ConstU32<60>;
     type MinFeePerByte = ConstU64<1_000>;
+    type WeightInfo = pallet_ringct::weights::SubstrateWeight<Runtime>;
 }
 
 // ---- Genesis presets ----------------------------------------------------

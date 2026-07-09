@@ -47,7 +47,7 @@ pub fn hash_meets_difficulty(work: &[u8; 32], difficulty: U256) -> bool {
 /// Recompute the work from `pre_hash`/`seed`/`seal.nonce` and check it both
 /// matches the claimed work and meets `difficulty`. Recomputing (rather than
 /// trusting `seal.work`) is what makes the seal unforgeable.
-pub fn verify_seal<H: Hasher>(
+pub fn verify_seal<H: Hasher + ?Sized>(
     hasher: &H,
     pre_hash: &[u8],
     seed: &[u8],
@@ -64,7 +64,7 @@ pub fn verify_seal<H: Hasher>(
 /// Try nonces in `[start, start + rounds)` for a valid seal. Returns the
 /// first winning seal, or `None` if the range is exhausted (the miner loop
 /// calls this repeatedly with fresh ranges).
-pub fn mine<H: Hasher>(
+pub fn mine<H: Hasher + ?Sized>(
     hasher: &H,
     pre_hash: &[u8],
     seed: &[u8],
@@ -95,33 +95,52 @@ impl Hasher for BlakeHasher {
     }
 }
 
-/// RandomX hasher (production). The `seed` is the epoch key; the caller is
-/// responsible for rotating it (Monero rotates every ~2048 blocks off an old
-/// block hash) and for caching the VM across nonces — construction is
-/// expensive, so a real miner builds one VM per epoch, not per hash.
+/// RandomX hasher (production). Rebuilds the VM when the epoch `seed` changes
+/// (from [`crate::algorithm::seed_for_parent`]). Construction is expensive —
+/// one rebuild per epoch, not per hash.
 #[cfg(feature = "randomx")]
 pub struct RandomXHasher {
-    vm: std::sync::Mutex<randomx_rs::RandomXVM>,
+    state: std::sync::Mutex<RandomXState>,
+}
+
+#[cfg(feature = "randomx")]
+struct RandomXState {
+    seed: Vec<u8>,
+    vm: randomx_rs::RandomXVM,
 }
 
 #[cfg(feature = "randomx")]
 impl RandomXHasher {
     pub fn new(seed: &[u8]) -> Result<Self, randomx_rs::RandomXError> {
+        Ok(Self {
+            state: std::sync::Mutex::new(RandomXState {
+                seed: seed.to_vec(),
+                vm: Self::build_vm(seed)?,
+            }),
+        })
+    }
+
+    fn build_vm(seed: &[u8]) -> Result<randomx_rs::RandomXVM, randomx_rs::RandomXError> {
         use randomx_rs::{RandomXCache, RandomXFlag, RandomXVM};
         let flags = RandomXFlag::get_recommended_flags();
         let cache = RandomXCache::new(flags, seed)?;
-        let vm = RandomXVM::new(flags, Some(cache), None)?;
-        Ok(Self { vm: std::sync::Mutex::new(vm) })
+        RandomXVM::new(flags, Some(cache), None)
     }
 }
 
 #[cfg(feature = "randomx")]
 impl Hasher for RandomXHasher {
-    fn hash(&self, pre_hash: &[u8], _seed: &[u8], nonce: u64) -> [u8; 32] {
+    fn hash(&self, pre_hash: &[u8], seed: &[u8], nonce: u64) -> [u8; 32] {
+        let mut state = self.state.lock().expect("poisoned");
+        if state.seed.as_slice() != seed {
+            // Epoch rotated — rebuild the RandomX dataset for the new seed.
+            state.vm = Self::build_vm(seed).expect("randomx vm rebuild");
+            state.seed = seed.to_vec();
+        }
         let mut input = Vec::with_capacity(pre_hash.len() + 8);
         input.extend_from_slice(pre_hash);
         input.extend_from_slice(&nonce.to_le_bytes());
-        let out = self.vm.lock().expect("poisoned").calculate_hash(&input).expect("randomx hash");
+        let out = state.vm.calculate_hash(&input).expect("randomx hash");
         let mut work = [0u8; 32];
         work.copy_from_slice(&out[..32]);
         work

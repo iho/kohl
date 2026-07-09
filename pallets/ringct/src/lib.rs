@@ -33,11 +33,11 @@ use ringct_primitives::{
     MAX_RANGE_PROOF_BYTES, MAX_RING_SIZE,
 };
 use scale_info::TypeInfo;
-use sp_runtime::transaction_validity::{
-    InvalidTransaction, TransactionSource, TransactionValidity, ValidTransaction,
-};
+use sp_runtime::transaction_validity::{InvalidTransaction, ValidTransaction};
 
 pub use pallet::*;
+pub mod weights;
+pub use weights::WeightInfo;
 
 #[cfg(test)]
 mod mock;
@@ -192,6 +192,9 @@ pub mod pallet {
         /// Spam floor: required fee per encoded byte of the transfer.
         #[pallet::constant]
         type MinFeePerByte: Get<u64>;
+
+        /// Extrinsic weights (see [`weights`]).
+        type WeightInfo: weights::WeightInfo;
     }
 
     /// Append-only output set, keyed by global output index.
@@ -258,6 +261,8 @@ pub mod pallet {
         OutputImmature,
         /// This key image has already been spent.
         KeyImageAlreadySpent,
+        /// One-time key or tx pubkey is not a valid non-identity Ristretto point.
+        InvalidPoint,
         /// The CLSAG did not verify.
         ClsagInvalid,
         /// Σ C_pseudo != Σ C_out + fee·H (or a commitment failed to decode).
@@ -283,24 +288,26 @@ pub mod pallet {
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         /// The only user-facing operation on this chain: a RingCT transfer.
-        /// Unsigned — authorization is carried inside `tx` itself.
+        /// Self-authorizing via [`pallet::authorize`] — the CLSAG *is* the
+        /// proof; there is no account signature. Requires
+        /// `frame_system::AuthorizeCall` in the runtime's tx extensions.
         #[pallet::call_index(0)]
-        #[pallet::weight((
-            // Placeholder until Phase 4 benchmarking; dominated by native
-            // CLSAG (≈ 2·ring_size scalar mults per input) + Bulletproof.
-            Weight::from_parts(
-                500_000_000_u64.saturating_add(300_000_000 * tx.inputs.len() as u64),
-                0,
-            )
-            .saturating_add(T::DbWeight::get().reads_writes(
-                (T::RingSize::get() as u64 + 1) * tx.inputs.len() as u64,
-                tx.inputs.len() as u64 + tx.outputs.len() as u64 + 2,
-            )),
-            DispatchClass::Normal,
-            Pays::No,
-        ))]
+        #[pallet::weight({
+            let w = T::WeightInfo::transfer(
+                tx.inputs.len() as u32,
+                tx.outputs.len() as u32,
+                T::RingSize::get(),
+            );
+            (w, DispatchClass::Normal, Pays::No)
+        })]
+        #[pallet::weight_of_authorize(T::WeightInfo::authorize_transfer(tx.inputs.len() as u32))]
+        #[pallet::authorize(|source, tx: &TransferTx| -> TransactionValidityWithRefund {
+            // Pool + block inclusion both allowed; full crypto at dispatch.
+            let _ = source;
+            Self::authorize_transfer(tx).map(|v| (v, Weight::zero()))
+        })]
         pub fn transfer(origin: OriginFor<T>, tx: TransferTx) -> DispatchResult {
-            ensure_none(origin)?;
+            ensure_authorized(origin)?;
             Self::verify_transfer(&tx)?;
             Self::apply_transfer(tx)
         }
@@ -308,13 +315,15 @@ pub mod pallet {
         /// Inherent-only: the block author mints `block_reward + fees` as new
         /// outputs. Coinbase amounts are public (as in Monero) and enter the
         /// confidential domain on first spend.
+        ///
+        /// Bare inherent (not a general transaction) — uses `ensure_none`, not
+        /// `#[pallet::authorize]`. Gossiped coinbase extrinsics are rejected
+        /// by the node/inherent filter (`is_inherent`).
         #[pallet::call_index(1)]
-        #[pallet::weight((
-            Weight::from_parts(50_000_000, 0)
-                .saturating_add(T::DbWeight::get().reads_writes(3, outputs.len() as u64 + 4)),
-            DispatchClass::Mandatory,
-            Pays::No,
-        ))]
+        #[pallet::weight({
+            let w = T::WeightInfo::coinbase(outputs.len() as u32);
+            (w, DispatchClass::Mandatory, Pays::No)
+        })]
         pub fn coinbase(
             origin: OriginFor<T>,
             outputs: BoundedVec<CoinbaseOutput, ConstU32<MAX_OUTPUTS>>,
@@ -323,6 +332,10 @@ pub mod pallet {
             ensure_none(origin)?;
             ensure!(!CoinbaseDone::<T>::get(), Error::<T>::CoinbaseAlreadyIncluded);
             ensure!(!outputs.is_empty(), Error::<T>::EmptyInputsOrOutputs);
+            ensure!(
+                crypto_host::is_valid_point_v1(&tx_pubkey),
+                Error::<T>::InvalidPoint
+            );
 
             let reward = block_reward(Emitted::<T>::get());
             let fees = BlockFees::<T>::get();
@@ -331,6 +344,10 @@ pub mod pallet {
             let mut total: u64 = 0;
             for out in &outputs {
                 ensure!(out.amount > 0, Error::<T>::CoinbaseAmountInvalid);
+                ensure!(
+                    crypto_host::is_valid_point_v1(&out.one_time_key),
+                    Error::<T>::InvalidPoint
+                );
                 total = total.checked_add(out.amount).ok_or(Error::<T>::CoinbaseAmountInvalid)?;
             }
             ensure!(total == entitled, Error::<T>::CoinbaseAmountInvalid);
@@ -367,62 +384,6 @@ pub mod pallet {
                 fees,
             });
             Ok(())
-        }
-    }
-
-    // TODO(Phase 4): migrate to `#[pallet::authorize]` + `frame_system::AuthorizeCall`
-    // (ValidateUnsigned is deprecated in stable2606, removal after April 2027;
-    // see https://github.com/paritytech/polkadot-sdk/issues/2415).
-    #[allow(deprecated)]
-    #[pallet::validate_unsigned]
-    impl<T: Config> ValidateUnsigned for Pallet<T> {
-        type Call = Call<T>;
-
-        fn validate_unsigned(source: TransactionSource, call: &Self::Call) -> TransactionValidity {
-            let tx = match call {
-                Call::transfer { tx } => tx,
-                // The coinbase is a bare inherent: the executive validates it
-                // through this path (`pre_dispatch` → source `InBlock`) when
-                // applying the block. Accept it there, but never from the
-                // gossip pool — and only once per block. Its amount is still
-                // checked by the dispatch logic.
-                Call::coinbase { .. } if matches!(source, TransactionSource::InBlock) => {
-                    return ValidTransaction::with_tag_prefix("RingCtCoinbase")
-                        .and_provides([b"kohl/coinbase".as_slice()].concat())
-                        .longevity(1)
-                        .propagate(false)
-                        .build();
-                }
-                _ => return InvalidTransaction::Call.into(),
-            };
-
-            // Cheap pre-validation only; full verification happens at dispatch.
-            let encoded_len = tx.encoded_size() as u64;
-            if tx.fee < T::MinFeePerByte::get().saturating_mul(encoded_len) {
-                return InvalidTransaction::Payment.into();
-            }
-            if tx.inputs.is_empty() || tx.outputs.is_empty() {
-                return InvalidTransaction::BadProof.into();
-            }
-            for input in &tx.inputs {
-                if KeyImages::<T>::contains_key(input.key_image) {
-                    return InvalidTransaction::Stale.into();
-                }
-            }
-
-            Ok(ValidTransaction {
-                priority: tx.fee / encoded_len.max(1),
-                requires: Vec::new(),
-                // One tag per key image: the pool auto-rejects conflicting
-                // spends of the same output and keeps the higher-priority tx.
-                provides: tx
-                    .inputs
-                    .iter()
-                    .map(|i| (b"kohl/ki", i.key_image).encode())
-                    .collect(),
-                longevity: 64,
-                propagate: true,
-            })
         }
     }
 
@@ -465,6 +426,39 @@ pub mod pallet {
             super::signing_hash(tx)
         }
 
+        /// Cheap pool-side checks for `#[pallet::authorize]` on `transfer`.
+        /// Full CLSAG / balance / range proof run at dispatch.
+        pub fn authorize_transfer(
+            tx: &TransferTx,
+        ) -> Result<ValidTransaction, sp_runtime::transaction_validity::TransactionValidityError>
+        {
+            let encoded_len = tx.encoded_size() as u64;
+            if tx.fee < T::MinFeePerByte::get().saturating_mul(encoded_len) {
+                return Err(InvalidTransaction::Payment.into());
+            }
+            if tx.inputs.is_empty() || tx.outputs.is_empty() {
+                return Err(InvalidTransaction::BadProof.into());
+            }
+            for input in &tx.inputs {
+                if KeyImages::<T>::contains_key(input.key_image) {
+                    return Err(InvalidTransaction::Stale.into());
+                }
+            }
+            Ok(ValidTransaction {
+                priority: tx.fee / encoded_len.max(1),
+                requires: Vec::new(),
+                // One tag per key image: the pool auto-rejects conflicting
+                // spends of the same output and keeps the higher-priority tx.
+                provides: tx
+                    .inputs
+                    .iter()
+                    .map(|i| (b"kohl/ki", i.key_image).encode())
+                    .collect(),
+                longevity: 64,
+                propagate: true,
+            })
+        }
+
         /// Full consensus verification of a transfer (BLUEPRINT.md §3.4).
         fn verify_transfer(tx: &TransferTx) -> DispatchResult {
             ensure!(
@@ -480,6 +474,17 @@ pub mod pallet {
                 tx.fee >= T::MinFeePerByte::get().saturating_mul(tx.encoded_size() as u64),
                 Error::<T>::FeeTooLow
             );
+            // Point hygiene before expensive host crypto.
+            ensure!(
+                crypto_host::is_valid_point_v1(&tx.tx_pubkey),
+                Error::<T>::InvalidPoint
+            );
+            for out in &tx.outputs {
+                ensure!(
+                    crypto_host::is_valid_point_v1(&out.one_time_key),
+                    Error::<T>::InvalidPoint
+                );
+            }
 
             let now = frame_system::Pallet::<T>::block_number();
             let ring_size = T::RingSize::get() as usize;

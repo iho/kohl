@@ -35,10 +35,14 @@ A single-node dev chain can mine and mint coinbase outputs.
 | Stealth addresses + view tags | Done |
 | Host-function crypto (native verify) | Done |
 | Runnable PoW node (`--dev`) | Done |
-| Production RandomX epoch seed | Partial (dev uses fixed seed / BLAKE2b fallback) |
-| Benchmarked weights | Placeholder |
+| Epoch-rotating PoW seed (lagged block hash) | Done (importer + miner) |
+| Persistent miner address (`--mining-seed`) | Done |
+| Wallet age-biased decoy sampler | Done |
+| `#[pallet::authorize]` (no ValidateUnsigned) | Done |
+| Production RandomX hasher (vs BLAKE2b dev) | Feature-gated (`cargo build -p kohl-node --features randomx`) |
+| WeightInfo (engineered, host-crypto scaled) | Done — replace with machine benches later |
+| One-time key point hygiene | Done |
 | Network privacy (Tor / Dandelion++) | Planned |
-| `ValidateUnsigned` → `#[pallet::authorize]` | Planned |
 
 See [BLUEPRINT.md](BLUEPRINT.md) for architecture, verification rules (§3.4),
 tokenomics, and the full remaining-work list.
@@ -85,13 +89,18 @@ WASM runtime builds pass `--allow-undefined` to the linker so `sp_io` and
 ### Run a single-node dev chain
 
 ```bash
+# Throwaway miner keys (printed once at startup):
 ./target/release/kohl --dev --validator --tmp
+
+# Persistent payout address (same seed as kohl-wallet):
+./target/release/kohl --dev --validator --tmp \
+  --mining-seed 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
 The node mines blocks and attaches a **coinbase inherent** each block: one
-stealth one-time output to a throwaway miner address for that run. The
-**reward amount is computed by the runtime** (`block_reward + fees`), not
-chosen by the miner.
+stealth one-time output to the miner address. The **reward amount is computed
+by the runtime** (`block_reward + fees`), not chosen by the miner. PoW uses an
+**epoch seed** derived from a lagged block hash (see `kohl_pow::seed_for_parent`).
 
 ### Tests
 

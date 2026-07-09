@@ -23,7 +23,9 @@ ureq = { version = "2", features = ["json"] }
 hex = "0.4"
 
 sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
 frame-support = { workspace = true, features = ["std"] }
+frame-system = { workspace = true, features = ["std"] }
 ringct-crypto = { workspace = true, features = ["std"] }
 ringct-primitives = { workspace = true, features = ["std"] }
 pallet-ringct = { workspace = true, features = ["std"] }
