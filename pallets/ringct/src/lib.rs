@@ -39,6 +39,9 @@ pub use pallet::*;
 pub mod weights;
 pub use weights::WeightInfo;
 
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking;
+
 #[cfg(test)]
 mod mock;
 #[cfg(test)]
@@ -357,7 +360,10 @@ pub mod pallet {
             ensure!(total == entitled, Error::<T>::CoinbaseAmountInvalid);
 
             BlockFees::<T>::kill();
-            Emitted::<T>::mutate(|e| *e = e.saturating_add(reward));
+            Emitted::<T>::try_mutate(|e| -> DispatchResult {
+                *e = e.checked_add(reward).ok_or(Error::<T>::ArithmeticOverflow)?;
+                Ok(())
+            })?;
             CoinbaseDone::<T>::put(true);
 
             let height = frame_system::Pallet::<T>::block_number();

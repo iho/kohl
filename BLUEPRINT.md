@@ -37,13 +37,13 @@ The WASM runtime build needs `--allow-undefined` passed to the wasm linker (so t
 and `ringct_crypto` host functions stay as imports); this is wired in `.cargo/config.toml`
 via `WASM_BUILD_RUSTFLAGS`.
 
-**Remaining work**: replace engineered `WeightInfo` with `frame-benchmarking`
-machine numbers; P2P privacy (Tor/Dandelion++); external crypto audit
-(Phase 5). Fuzz targets land under `fuzz/` (`cargo fuzz run …`).
+**Remaining work**: run `frame-omni-bencher` against a production WASM runtime
+to replace engineered `WeightInfo` with machine numbers; Dandelion++ tx
+propagation; external crypto audit (Phase 5).
 
-**Recently landed**: multi-input wallet spends; `kohl-ash` local testnet;
-coinbase view tags; `ringct_*` JSON-RPC; fuzz harnesses; WeightInfo; point
-hygiene; authorize; epoch PoW seed; CI.
+**Recently landed**: criterion crypto benches; `runtime-benchmarks` scaffold on
+`pallet-ringct`; Tor/network-privacy guidance; `cargo-deny` config; multi-input
+wallet; kohl-ash; ringct RPC; fuzz targets; authorize; epoch PoW seed.
 
 ---
 

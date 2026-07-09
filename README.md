@@ -47,7 +47,9 @@ A single-node dev chain can mine and mint coinbase outputs.
 | Fuzz targets (CLSAG / transfer decode) | Done (`fuzz/`) |
 | Coinbase view tags (wallet scan parity) | Done |
 | `ringct_*` JSON-RPC for wallets | Done |
-| Network privacy (Tor / Dandelion++) | Planned |
+| Criterion crypto benches | Done (`cargo bench -p ringct-crypto`) |
+| frame-benchmarking scaffold | Done (`--features runtime-benchmarks`) |
+| Network privacy guidance (Tor) | Documented; Dandelion++ still planned |
 
 See [BLUEPRINT.md](BLUEPRINT.md) for architecture, verification rules (§3.4),
 tokenomics, and the full remaining-work list.
@@ -147,6 +149,38 @@ python3 examples/learn_ringct.py --check  # self-tests
 ```
 
 Companion write-up: **[GLOSSARY.md](GLOSSARY.md)** (acronyms, math, Python toys).
+
+### Benchmarks & supply-chain checks
+
+```bash
+# Host crypto micro-benches (CLSAG / Bulletproofs / balance):
+cargo bench -p ringct-crypto --bench crypto
+
+# Pallet extrinsic benchmarks (feature-gated scaffold):
+cargo test -p pallet-ringct --features runtime-benchmarks
+
+# Advisory / license scan (requires cargo-deny):
+cargo install cargo-deny
+cargo deny check
+```
+
+### Network privacy (recommended)
+
+PoW and RingCT hide on-chain linkage; **IP-level metadata still leaks** who
+submitted a transaction. Until Dandelion++ is integrated:
+
+1. Run the node over **Tor** (or I2P) onion services for P2P and RPC.
+2. Prefer a remote full node you control rather than a third-party public RPC.
+3. Do not reuse the same network identity across unrelated wallets.
+
+Example (Tor SOCKS for outbound peers — adapt to your setup):
+
+```bash
+# After configuring Tor to expose a SOCKS port and optionally an onion service:
+./target/release/kohl --dev --validator --tmp \
+  --proxy-server 127.0.0.1:9050 \
+  --mining-seed <64-hex>
+```
 
 ### Fuzzing (Phase 5)
 

@@ -25,6 +25,7 @@ scale-info = { version = "2.11", default-features = false, features = ["derive"]
 # Polkadot SDK — every crate pinned to the same stable tag (see BLUEPRINT.md §2.1)
 frame-support = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 frame-system = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
+frame-benchmarking = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 sp-core = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 sp-io = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }

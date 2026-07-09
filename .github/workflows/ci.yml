@@ -40,3 +40,6 @@ jobs:
 
       - name: Learn-script smoke
         run: python3 examples/learn_ringct.py --check
+
+      - name: Pallet benchmarks compile
+        run: cargo test -p pallet-ringct --features runtime-benchmarks --lib --no-run
