@@ -215,6 +215,8 @@ fn kohl_genesis(initial_difficulty: u128) -> serde_json::Value {
 fn get_genesis_preset(id: &sp_genesis_builder::PresetId) -> Option<Vec<u8>> {
     let value = match id.as_ref() {
         "development" => kohl_genesis(MinDifficulty::get()),
+        // Local testnet: harder than pure dev, still easy for a laptop miner.
+        "kohl-ash" => kohl_genesis(100_000),
         "mainnet" => kohl_genesis(50_000_000),
         _ => return None,
     };
@@ -322,6 +324,7 @@ sp_api::impl_runtime_apis! {
         fn preset_names() -> Vec<sp_genesis_builder::PresetId> {
             vec![
                 sp_genesis_builder::PresetId::from("development"),
+                sp_genesis_builder::PresetId::from("kohl-ash"),
                 sp_genesis_builder::PresetId::from("mainnet"),
             ]
         }

@@ -56,9 +56,9 @@ pub const INHERENT_IDENTIFIER: sp_inherents::InherentIdentifier = *b"ringct0b";
 pub type Payload = BoundedVec<u8, ConstU32<MAX_PAYLOAD_BYTES>>;
 
 /// Inherent data a mining node supplies for its coinbase: the payout
-/// destination `(one_time_key, tx_pubkey)`. The reward amount is computed by
-/// the runtime, not the miner (see `ProvideInherent::create_inherent`).
-pub type CoinbaseInherent = ([u8; 32], [u8; 32]);
+/// destination `(one_time_key, tx_pubkey, view_tag)`. The reward amount is
+/// computed by the runtime, not the miner (see `ProvideInherent::create_inherent`).
+pub type CoinbaseInherent = ([u8; 32], [u8; 32], u8);
 
 /// The message every CLSAG in a transfer signs: a hash binding the rings,
 /// key images, pseudo-commitments, all outputs, the tx pubkey and the fee —
@@ -102,6 +102,8 @@ pub struct CoinbaseOutput {
     /// One-time key of the miner (stealth-derived like any output).
     pub one_time_key: [u8; 32],
     pub amount: u64,
+    /// View tag for wallet scanning (same convention as confidential outs).
+    pub view_tag: u8,
 }
 
 /// A stored output: the on-chain record plus consensus bookkeeping.
@@ -271,6 +273,8 @@ pub mod pallet {
         RangeProofInvalid,
         /// Fee below the per-byte floor.
         FeeTooLow,
+        /// Checked arithmetic overflow (fees / emission bookkeeping).
+        ArithmeticOverflow,
         /// Only one coinbase per block.
         CoinbaseAlreadyIncluded,
         /// Coinbase outputs must be non-zero and sum to reward + fees.
@@ -366,7 +370,7 @@ pub mod pallet {
                         one_time_key: out.one_time_key,
                         commitment: crypto_host::value_commitment_v1(out.amount),
                         tx_pubkey,
-                        view_tag: 0,
+                        view_tag: out.view_tag,
                         payload: Default::default(),
                         amount: Some(out.amount),
                         height,
@@ -398,15 +402,19 @@ pub mod pallet {
             // computes the entitled amount (reward + carried-over fees) from
             // chain state, so a miner can never over-claim via the inherent
             // data (and the `coinbase` dispatch re-checks it anyway).
-            let (one_time_key, tx_pubkey): CoinbaseInherent =
+            let (one_time_key, tx_pubkey, view_tag): CoinbaseInherent =
                 data.get_data(&Self::INHERENT_IDENTIFIER).ok().flatten()?;
             let amount =
                 block_reward(Emitted::<T>::get()).checked_add(BlockFees::<T>::get())?;
             if amount == 0 {
                 return None;
             }
-            let outputs =
-                BoundedVec::try_from(alloc::vec![CoinbaseOutput { one_time_key, amount }]).ok()?;
+            let outputs = BoundedVec::try_from(alloc::vec![CoinbaseOutput {
+                one_time_key,
+                amount,
+                view_tag,
+            }])
+            .ok()?;
             Some(Call::coinbase { outputs, tx_pubkey })
         }
 
@@ -555,7 +563,10 @@ pub mod pallet {
             for ki in &key_images {
                 KeyImages::<T>::insert(ki, ());
             }
-            BlockFees::<T>::mutate(|f| *f = f.saturating_add(tx.fee));
+            BlockFees::<T>::try_mutate(|f| -> DispatchResult {
+                *f = f.checked_add(tx.fee).ok_or(Error::<T>::ArithmeticOverflow)?;
+                Ok(())
+            })?;
 
             let height = frame_system::Pallet::<T>::block_number();
             let first = NextOutputIndex::<T>::get();

@@ -20,6 +20,17 @@ pub fn development_chain_spec() -> Result<ChainSpec, String> {
         .build())
 }
 
+/// Local multi-node testnet ("kohl-ash") — fair-launch genesis, moderate
+/// initial difficulty for multi-miner smoke tests (BLUEPRINT.md Phase 4).
+pub fn local_testnet_chain_spec() -> Result<ChainSpec, String> {
+    Ok(ChainSpec::builder(wasm()?, None)
+        .with_name("kohl-ash Local Testnet")
+        .with_id("kohl-ash")
+        .with_chain_type(ChainType::Local)
+        .with_genesis_config_preset_name("kohl-ash")
+        .build())
+}
+
 pub fn mainnet_chain_spec() -> Result<ChainSpec, String> {
     Ok(ChainSpec::builder(wasm()?, None)
         .with_name("kohl")

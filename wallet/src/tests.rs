@@ -8,13 +8,13 @@ use std::collections::BTreeMap;
 fn mint_to(address: &stealth::StealthAddress, gi: u64, amount: u64) -> StoredOut {
     let (tx_secret, tx_pubkey) = stealth::tx_keypair();
     let shared = stealth::sender_shared_secret(&tx_secret, &address.view_public).unwrap();
-    let (one_time_key, _tag) =
+    let (one_time_key, view_tag) =
         stealth::derive_one_time_key(&shared, &address.spend_public, 0).unwrap();
     StoredOutput {
         one_time_key,
         commitment: crypto::value_commitment(amount),
         tx_pubkey,
-        view_tag: 0,
+        view_tag,
         payload: Default::default(),
         amount: Some(amount),
         height: gi as u32,
@@ -186,6 +186,76 @@ fn tampering_a_built_transfer_is_rejected() {
     let mut bad = tx.clone();
     bad.fee += 1;
     assert!(!chain_accepts(&bad, &set));
+}
+
+#[test]
+fn multi_input_transfer_is_chain_valid() {
+    let alice = Wallet::from_seed(&[1u8; 32]);
+    let bob = Wallet::from_seed(&[9u8; 32]);
+
+    let mut set = BTreeMap::new();
+    // Alice owns 0 and 1 (50k each); rest decoys.
+    for gi in 0..8u64 {
+        let out = if gi <= 1 {
+            mint_to(&alice.address, gi, 50_000)
+        } else {
+            random_decoy(gi)
+        };
+        set.insert(gi, out);
+    }
+    let outputs: Vec<(u64, StoredOut)> = set.iter().map(|(k, v)| (*k, v.clone())).collect();
+    let owned = alice.scan(&outputs);
+    assert_eq!(owned.len(), 2);
+
+    let decoys_a: Vec<RingMember> = [2u64, 3, 4]
+        .iter()
+        .map(|gi| RingMember {
+            global_index: *gi,
+            one_time_key: set[gi].one_time_key,
+            commitment: set[gi].commitment,
+        })
+        .collect();
+    let decoys_b: Vec<RingMember> = [5u64, 6, 7]
+        .iter()
+        .map(|gi| RingMember {
+            global_index: *gi,
+            one_time_key: set[gi].one_time_key,
+            commitment: set[gi].commitment,
+        })
+        .collect();
+
+    let fee = 1_000;
+    let send = 70_000; // needs both inputs
+    let tx = alice
+        .build_transfer_multi(&owned, &[decoys_a, decoys_b], &bob.address, send, fee)
+        .unwrap();
+
+    assert_eq!(tx.inputs.len(), 2);
+    assert!(tx.inputs[0].key_image < tx.inputs[1].key_image);
+    assert!(chain_accepts(&tx, &set), "runtime verification failed");
+
+    let created: Vec<(u64, StoredOut)> = tx
+        .outputs
+        .iter()
+        .enumerate()
+        .map(|(i, o)| {
+            (
+                100 + i as u64,
+                StoredOutput {
+                    one_time_key: o.one_time_key,
+                    commitment: o.commitment,
+                    tx_pubkey: tx.tx_pubkey,
+                    view_tag: o.view_tag,
+                    payload: o.payload.clone(),
+                    amount: None,
+                    height: 1,
+                    coinbase: false,
+                },
+            )
+        })
+        .collect();
+    assert_eq!(bob.scan(&created)[0].amount, send);
+    assert_eq!(alice.scan(&created)[0].amount, 100_000 - send - fee);
 }
 
 #[test]

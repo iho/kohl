@@ -42,22 +42,45 @@ impl RpcClient {
     }
 
     pub fn output_count(&self) -> R<u64> {
+        // Prefer dedicated ringct_* RPC; fall back to state_call for older nodes.
+        if let Ok(v) = self.call("ringct_outputCount", json!([])) {
+            if let Some(n) = v.as_u64() {
+                return Ok(n);
+            }
+        }
         let bytes = self.runtime_call("RingCtApi_output_count", &[])?;
         Ok(u64::decode(&mut &bytes[..])?)
     }
 
     pub fn min_fee_per_byte(&self) -> R<u64> {
+        if let Ok(v) = self.call("ringct_minFeePerByte", json!([])) {
+            if let Some(n) = v.as_u64() {
+                return Ok(n);
+            }
+        }
         let bytes = self.runtime_call("RingCtApi_min_fee_per_byte", &[])?;
         Ok(u64::decode(&mut &bytes[..])?)
     }
 
     pub fn is_key_image_spent(&self, key_image: [u8; 32]) -> R<bool> {
+        let hex_ki = format!("0x{}", hex::encode(key_image));
+        if let Ok(v) = self.call("ringct_isKeyImageSpent", json!([hex_ki])) {
+            if let Some(b) = v.as_bool() {
+                return Ok(b);
+            }
+        }
         let bytes = self.runtime_call("RingCtApi_is_key_image_spent", &key_image.encode())?;
         Ok(bool::decode(&mut &bytes[..])?)
     }
 
     /// Fetch every output created in blocks `[from, to]`.
     pub fn outputs_in_range(&self, from: u32, to: u32) -> R<Vec<(u64, StoredOut)>> {
+        if let Ok(v) = self.call("ringct_outputsInRange", json!([from, to])) {
+            if let Some(s) = v.as_str() {
+                let bytes = hex::decode(s.trim_start_matches("0x"))?;
+                return Ok(Decode::decode(&mut &bytes[..])?);
+            }
+        }
         let bytes = self.runtime_call("RingCtApi_outputs_in_range", &(from, to).encode())?;
         Ok(Decode::decode(&mut &bytes[..])?)
     }

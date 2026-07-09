@@ -1,0 +1,29 @@
+[package]
+name = "kohl-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+ringct-crypto = { path = "../primitives/ringct-crypto", features = ["std"] }
+codec = { package = "parity-scale-codec", version = "3.7", features = ["derive"] }
+pallet-ringct = { path = "../pallets/ringct", features = ["std"] }
+
+[[bin]]
+name = "clsag_verify"
+path = "fuzz_targets/clsag_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transfer_decode"
+path = "fuzz_targets/transfer_decode.rs"
+test = false
+doc = false
+bench = false

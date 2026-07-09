@@ -91,6 +91,7 @@ fn create_inherent_data_providers(
 struct CoinbaseProvider {
 	one_time_key: [u8; 32],
 	tx_pubkey: [u8; 32],
+	view_tag: u8,
 }
 
 #[async_trait::async_trait]
@@ -101,7 +102,7 @@ impl sp_inherents::InherentDataProvider for CoinbaseProvider {
 	) -> Result<(), sp_inherents::Error> {
 		inherent_data.put_data(
 			pallet_ringct::INHERENT_IDENTIFIER,
-			&(self.one_time_key, self.tx_pubkey),
+			&(self.one_time_key, self.tx_pubkey, self.view_tag),
 		)
 	}
 
@@ -125,7 +126,11 @@ fn mining_inherent_data_providers(
 		// Derive a one-time key for output index 0 of this coinbase tx.
 		let coinbase = stealth::sender_shared_secret(&tx_secret, &miner_address.view_public)
 			.and_then(|shared| stealth::derive_one_time_key(&shared, &miner_address.spend_public, 0))
-			.map(|(one_time_key, _tag)| CoinbaseProvider { one_time_key, tx_pubkey })
+			.map(|(one_time_key, view_tag)| CoinbaseProvider {
+				one_time_key,
+				tx_pubkey,
+				view_tag,
+			})
 			.ok_or_else(|| {
 				sp_inherents::Error::Application(Box::from("invalid miner address"))
 			})?;

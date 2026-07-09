@@ -38,13 +38,12 @@ and `ringct_crypto` host functions stay as imports); this is wired in `.cargo/co
 via `WASM_BUILD_RUSTFLAGS`.
 
 **Remaining work**: replace engineered `WeightInfo` with `frame-benchmarking`
-machine numbers; P2P privacy (Tor/Dandelion++); external crypto audit / fuzzing
-(Phase 5).
+machine numbers; P2P privacy (Tor/Dandelion++); external crypto audit
+(Phase 5). Fuzz targets land under `fuzz/` (`cargo fuzz run …`).
 
-**Recently landed**: `WeightInfo` + scaling formulas; one-time key / tx-pubkey
-point hygiene (`is_valid_point_v1`); `--mining-seed`; epoch PoW seed; wallet
-decoy sampler; `#[pallet::authorize]`; RandomX epoch rebuild; CI workflow;
-learning docs.
+**Recently landed**: multi-input wallet spends; `kohl-ash` local testnet;
+coinbase view tags; `ringct_*` JSON-RPC; fuzz harnesses; WeightInfo; point
+hygiene; authorize; epoch PoW seed; CI.
 
 ---
 

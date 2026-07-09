@@ -42,6 +42,11 @@ A single-node dev chain can mine and mint coinbase outputs.
 | Production RandomX hasher (vs BLAKE2b dev) | Feature-gated (`cargo build -p kohl-node --features randomx`) |
 | WeightInfo (engineered, host-crypto scaled) | Done — replace with machine benches later |
 | One-time key point hygiene | Done |
+| Multi-input wallet spends | Done |
+| Local testnet `kohl-ash` | Done |
+| Fuzz targets (CLSAG / transfer decode) | Done (`fuzz/`) |
+| Coinbase view tags (wallet scan parity) | Done |
+| `ringct_*` JSON-RPC for wallets | Done |
 | Network privacy (Tor / Dandelion++) | Planned |
 
 See [BLUEPRINT.md](BLUEPRINT.md) for architecture, verification rules (§3.4),
@@ -110,6 +115,29 @@ cargo test -p ringct-crypto -p pallet-ringct -p ringct-primitives -p pallet-diff
 cargo test
 ```
 
+### Wallet RPC
+
+The node exposes convenience methods (in addition to `state_call`):
+
+| Method | Purpose |
+|--------|---------|
+| `ringct_outputCount` | total outputs |
+| `ringct_minFeePerByte` | fee floor |
+| `ringct_isKeyImageSpent` | hex key image → bool |
+| `ringct_outputsInRange` | block range → SCALE hex of outputs |
+
+`kohl-wallet` prefers these and falls back to `state_call` for older nodes.
+
+### Local testnet (`kohl-ash`)
+
+```bash
+./target/release/kohl --chain kohl-ash --validator --tmp \
+  --mining-seed <64-hex>
+```
+
+Same fair-launch genesis as mainnet, moderate initial difficulty for multi-node
+smoke tests.
+
 ### Learn the privacy model
 
 ```bash
@@ -119,6 +147,14 @@ python3 examples/learn_ringct.py --check  # self-tests
 ```
 
 Companion write-up: **[GLOSSARY.md](GLOSSARY.md)** (acronyms, math, Python toys).
+
+### Fuzzing (Phase 5)
+
+```bash
+cargo install cargo-fuzz
+cargo +nightly fuzz run clsag_verify --fuzz-dir fuzz
+cargo +nightly fuzz run transfer_decode --fuzz-dir fuzz
+```
 
 ---
 

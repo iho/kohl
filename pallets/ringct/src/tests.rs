@@ -43,7 +43,7 @@ fn mint_ring_bed(n: usize) -> Vec<Owned> {
     let outputs: Vec<CoinbaseOutput> = keys
         .iter()
         .zip(&amounts)
-        .map(|((_, public), amount)| CoinbaseOutput { one_time_key: *public, amount: *amount })
+        .map(|((_, public), amount)| CoinbaseOutput { one_time_key: *public, amount: *amount, view_tag: 0 })
         .collect();
     assert_ok!(RingCt::coinbase(
         RuntimeOrigin::none(),
@@ -391,6 +391,7 @@ fn authorize_transfer_provides_key_image_tags() {
             outputs: bounded::<_, 8>(vec![CoinbaseOutput {
                 one_time_key: crypto::random_secret_key().1,
                 amount: 1,
+                view_tag: 0,
             }]),
             tx_pubkey: crypto::random_secret_key().1,
         };
@@ -406,7 +407,7 @@ fn coinbase_inherent_computes_reward_from_state() {
         let mut data = InherentData::new();
         let otk = crypto::random_secret_key().1;
         let r = crypto::random_secret_key().1;
-        let dest: crate::CoinbaseInherent = (otk, r);
+        let dest: crate::CoinbaseInherent = (otk, r, 0);
         data.put_data(crate::INHERENT_IDENTIFIER, &dest).unwrap();
 
         let call = <RingCt as ProvideInherent>::create_inherent(&data).expect("inherent built");
@@ -441,7 +442,7 @@ fn coinbase_sum_and_double_mint_rules_hold() {
         assert_noop!(
             RingCt::coinbase(
                 RuntimeOrigin::none(),
-                bounded::<_, 8>(vec![CoinbaseOutput { one_time_key: key, amount: reward + 1 }]),
+                bounded::<_, 8>(vec![CoinbaseOutput { one_time_key: key, amount: reward + 1, view_tag: 0 }]),
                 r,
             ),
             Error::<Test>::CoinbaseAmountInvalid
@@ -450,7 +451,7 @@ fn coinbase_sum_and_double_mint_rules_hold() {
         assert_noop!(
             RingCt::coinbase(
                 RuntimeOrigin::none(),
-                bounded::<_, 8>(vec![CoinbaseOutput { one_time_key: key, amount: reward }]),
+                bounded::<_, 8>(vec![CoinbaseOutput { one_time_key: key, amount: reward, view_tag: 0 }]),
                 r,
             ),
             Error::<Test>::CoinbaseAlreadyIncluded
@@ -475,13 +476,14 @@ fn stealth_end_to_end() {
         let reward = block_reward(0);
         let (tx_secret, tx_pubkey) = stealth::tx_keypair();
         let shared = stealth::sender_shared_secret(&tx_secret, &addr.view_public).unwrap();
-        let (otk, _tag) = stealth::derive_one_time_key(&shared, &addr.spend_public, 0).unwrap();
+        let (otk, tag) = stealth::derive_one_time_key(&shared, &addr.spend_public, 0).unwrap();
 
-        let mut outputs = vec![CoinbaseOutput { one_time_key: otk, amount: reward / 2 }];
+        let mut outputs = vec![CoinbaseOutput { one_time_key: otk, amount: reward / 2, view_tag: tag }];
         for _ in 0..3 {
             outputs.push(CoinbaseOutput {
                 one_time_key: crypto::random_secret_key().1,
                 amount: reward / 6,
+                view_tag: 0,
             });
         }
         outputs[3].amount = reward - reward / 2 - 2 * (reward / 6);
@@ -763,6 +765,7 @@ fn fees_carry_into_next_coinbase() {
             bounded::<_, 8>(vec![CoinbaseOutput {
                 one_time_key: key,
                 amount: reward + FEE,
+                view_tag: 0,
             }]),
             crypto::random_secret_key().1,
         ));
@@ -803,6 +806,7 @@ fn invalid_otk_rejected_at_coinbase_and_transfer() {
                 bounded::<_, 8>(vec![CoinbaseOutput {
                     one_time_key: [0xff; 32],
                     amount: reward,
+                    view_tag: 0,
                 }]),
                 r,
             ),
@@ -812,7 +816,7 @@ fn invalid_otk_rejected_at_coinbase_and_transfer() {
         assert_noop!(
             RingCt::coinbase(
                 RuntimeOrigin::none(),
-                bounded::<_, 8>(vec![CoinbaseOutput { one_time_key: good, amount: reward }]),
+                bounded::<_, 8>(vec![CoinbaseOutput { one_time_key: good, amount: reward, view_tag: 0 }]),
                 [0u8; 32],
             ),
             Error::<Test>::InvalidPoint

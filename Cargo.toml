@@ -62,7 +62,7 @@ sp-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polk
 substrate-frame-rpc-system = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 clap = { version = "4", features = ["derive"] }
 futures = { version = "0.3" }
-jsonrpsee = { version = "0.24", features = ["server"] }
+jsonrpsee = { version = "0.24", features = ["server", "macros"] }
 
 # Local crates
 ringct-primitives = { path = "primitives/ringct-primitives", default-features = false }

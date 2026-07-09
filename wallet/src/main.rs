@@ -112,18 +112,41 @@ fn main() -> Result<(), Box<dyn Error>> {
             let all = client.outputs_in_range(0, best)?;
             let owned = wallet.scan(&all);
 
-            // Rough fee estimate then pick a single input covering amount+fee.
+            // Fee estimate scales with input count; start with 1-in/2-out size.
             let est_fee = fee_per_byte.saturating_mul(3_000);
-            let input = owned
-                .iter()
-                .filter(|o| o.amount >= amount + est_fee && is_mature(o, best))
-                .max_by_key(|o| o.amount)
-                .ok_or("no single mature output covers the amount + fee")?;
+            let needed = amount.saturating_add(est_fee);
+            let mut mature: Vec<_> =
+                owned.into_iter().filter(|o| is_mature(o, best)).collect();
+            // Prefer larger outputs first (fewer inputs).
+            mature.sort_by(|a, b| b.amount.cmp(&a.amount));
+            let mut selected = Vec::new();
+            let mut total = 0u64;
+            for o in mature {
+                selected.push(o);
+                total = total.saturating_add(selected.last().unwrap().amount);
+                if total >= needed {
+                    break;
+                }
+            }
+            if total < needed {
+                return Err(format!(
+                    "not enough mature funds: need {needed}, have {total}"
+                )
+                .into());
+            }
+            // Re-estimate fee for multi-input size (~1.5 KiB per extra input).
+            let est_fee = fee_per_byte
+                .saturating_mul(3_000u64.saturating_add(1_500 * (selected.len() as u64 - 1)));
+            if total < amount.saturating_add(est_fee) {
+                return Err("selected inputs cover amount but not re-estimated fee; try again"
+                    .into());
+            }
 
-            // Decoys: gamma/age-biased sample of mature outputs (not first-N).
+            let spend_set: std::collections::BTreeSet<u64> =
+                selected.iter().map(|o| o.global_index).collect();
             let candidates: Vec<kohl_wallet::DecoyCandidate> = all
                 .iter()
-                .filter(|(gi, o)| *gi != input.global_index && output_mature(o, best))
+                .filter(|(gi, o)| !spend_set.contains(gi) && output_mature(o, best))
                 .map(|(gi, o)| kohl_wallet::DecoyCandidate {
                     global_index: *gi,
                     one_time_key: o.one_time_key,
@@ -132,14 +155,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                 })
                 .collect();
             let need = ring - 1;
-            let rng_seed = std::time::SystemTime::now()
+            let mut rng_seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)
                 .unwrap_or(1);
-            let decoys = kohl_wallet::sample_decoys(&candidates, need, best, rng_seed)
-                .map_err(|e| e.to_string())?;
+            let mut rings = Vec::with_capacity(selected.len());
+            for _ in &selected {
+                let decoys = kohl_wallet::sample_decoys(&candidates, need, best, rng_seed)
+                    .map_err(|e| e.to_string())?;
+                rings.push(decoys);
+                rng_seed = rng_seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            }
 
-            let tx = wallet.build_transfer(input, &decoys, &dest, amount, est_fee)?;
+            let tx =
+                wallet.build_transfer_multi(&selected, &rings, &dest, amount, est_fee)?;
+            let spent: Vec<u64> = selected.iter().map(|o| o.global_index).collect();
             let call = kohl_runtime::RuntimeCall::RingCt(pallet_ringct::Call::transfer { tx });
             // General transaction with AuthorizeCall so `#[pallet::authorize]`
             // can set origin to Authorized (bare extrinsics skip tx extensions).
@@ -151,13 +181,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                     frame_system::CheckSpecVersion::<kohl_runtime::Runtime>::new(),
                     frame_system::CheckTxVersion::<kohl_runtime::Runtime>::new(),
                     frame_system::CheckGenesis::<kohl_runtime::Runtime>::new(),
-                    frame_system::CheckEra::<kohl_runtime::Runtime>::from(sp_runtime::generic::Era::Immortal),
+                    frame_system::CheckEra::<kohl_runtime::Runtime>::from(
+                        sp_runtime::generic::Era::Immortal,
+                    ),
                     frame_system::CheckNonce::<kohl_runtime::Runtime>::from(0),
                     frame_system::CheckWeight::<kohl_runtime::Runtime>::new(),
                 ),
             );
             let hash = client.submit_extrinsic(&xt.encode())?;
-            println!("submitted transfer spending #{}: {}", input.global_index, hash);
+            println!("submitted transfer spending {:?}: {}", spent, hash);
         }
     }
     Ok(())

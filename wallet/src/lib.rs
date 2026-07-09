@@ -91,9 +91,13 @@ impl Wallet {
 
     fn try_own(&self, global_index: u64, out: &StoredOut) -> Option<OwnedOutput> {
         let shared = stealth::receiver_shared_secret(&self.keys.view_secret, &out.tx_pubkey)?;
-        // We don't store the local output index on chain, so try the small
-        // range [0, MAX_OUTPUTS): the one-time key derivation pins it down.
+        // Local output index is not on chain; try [0, MAX_OUTPUTS). View tags
+        // reject ~255/256 candidates with one hash before full derivation.
         for li in 0..MAX_OUTPUTS {
+            // Fast reject: view tag must match before full OTK derivation.
+            if stealth::view_tag(&shared, li) != out.view_tag {
+                continue;
+            }
             let (otk, _tag) =
                 stealth::derive_one_time_key(&shared, &self.address.spend_public, li)?;
             if otk != out.one_time_key {
@@ -103,8 +107,7 @@ impl Wallet {
             let (amount, blinding) = match out.amount {
                 // Coinbase: amount is public, blinding is zero.
                 Some(a) => (a, [0u8; 32]),
-                // Confidential: recover the amount from the masked payload and
-                // the blinding from the shared secret; verify the commitment.
+                // Confidential: recover amount + blinding; verify commitment.
                 None => {
                     let payload = out.payload.as_slice();
                     if payload.len() < 8 {
@@ -137,10 +140,7 @@ impl Wallet {
         None
     }
 
-    /// Build a RingCT transfer spending `input`, hidden in a ring with
-    /// `decoys`, sending `send_amount` to `dest` and the change back to self.
-    /// The produced transaction is chain-valid (its CLSAG, balance equation,
-    /// and range proof all verify).
+    /// Single-input convenience wrapper around [`Self::build_transfer_multi`].
     pub fn build_transfer(
         &self,
         input: &OwnedOutput,
@@ -149,78 +149,137 @@ impl Wallet {
         send_amount: u64,
         fee: u64,
     ) -> Result<TransferTx, WalletError> {
-        if decoys.is_empty() {
-            return Err(WalletError::RingTooSmall);
-        }
-        let total = send_amount.checked_add(fee).ok_or(WalletError::Bounds)?;
-        if input.amount < total {
-            return Err(WalletError::NotEnoughFunds { needed: total, have: input.amount });
-        }
-        let change = input.amount - total;
+        self.build_transfer_multi(&[input.clone()], &[decoys.to_vec()], dest, send_amount, fee)
+    }
 
-        // --- assemble the ring (sorted by global index) ---
-        let mut ring: Vec<RingMember> = decoys.to_vec();
-        ring.push(RingMember {
-            global_index: input.global_index,
-            one_time_key: input.one_time_key,
-            commitment: input.commitment,
-        });
-        ring.sort_by_key(|m| m.global_index);
-        ring.dedup_by_key(|m| m.global_index);
-        let position = ring
-            .iter()
-            .position(|m| m.global_index == input.global_index)
-            .ok_or(WalletError::RingTooSmall)?;
-        let ring_indices: Vec<u64> = ring.iter().map(|m| m.global_index).collect();
-        let mut ring_blob = Vec::with_capacity(ring.len() * 64);
-        for m in &ring {
-            ring_blob.extend_from_slice(&m.one_time_key);
-            ring_blob.extend_from_slice(&m.commitment);
+    /// Build a RingCT transfer spending one or more owned outputs.
+    ///
+    /// `rings_decoys[i]` is the decoy set for `inputs[i]` (must have the same
+    /// length as `inputs`). Each input is hidden in a ring of
+    /// `decoys + self`. Inputs are sorted by key image before signing (chain
+    /// canonical form). Always emits **two** outputs (payment + change) for
+    /// uniform shape.
+    pub fn build_transfer_multi(
+        &self,
+        inputs: &[OwnedOutput],
+        rings_decoys: &[Vec<RingMember>],
+        dest: &stealth::StealthAddress,
+        send_amount: u64,
+        fee: u64,
+    ) -> Result<TransferTx, WalletError> {
+        if inputs.is_empty() || inputs.len() != rings_decoys.len() {
+            return Err(WalletError::Bounds);
         }
+        let total_in: u64 = inputs.iter().try_fold(0u64, |acc, i| {
+            acc.checked_add(i.amount).ok_or(WalletError::Bounds)
+        })?;
+        let total_needed = send_amount.checked_add(fee).ok_or(WalletError::Bounds)?;
+        if total_in < total_needed {
+            return Err(WalletError::NotEnoughFunds { needed: total_needed, have: total_in });
+        }
+        let change = total_in - total_needed;
 
-        // --- build the two outputs (dest + change) under one tx keypair ---
+        // --- outputs (dest + change) under one tx keypair ---
         let (tx_secret, tx_pubkey) = stealth::tx_keypair();
         let (out0, b0) = self.make_output(&tx_secret, dest, 0, send_amount)?;
         let (out1, b1) = self.make_output(&tx_secret, &self.address, 1, change)?;
 
-        // Pseudo-output blinding balances the single input: Σ pseudo = Σ out.
-        let pseudo_blinding = crypto::balancing_blinding(&[b0, b1], &[])
+        // Pseudo blindings: free for first n−1 inputs; last closes
+        // Σ C' = Σ C_out  (i.e. Σ x' = b0 + b1).
+        let mut free: Vec<[u8; 32]> =
+            (0..inputs.len().saturating_sub(1)).map(|_| crypto::random_blinding()).collect();
+        let last = crypto::balancing_blinding(&[b0, b1], &free)
             .ok_or(WalletError::Crypto("blinding sum"))?;
-        let pseudo_commitment =
-            crypto::commit(input.amount, &pseudo_blinding).ok_or(WalletError::Crypto("commit"))?;
+        free.push(last);
+        let pseudo_blindings = free;
 
-        // Aggregated range proof over the output amounts.
+        // Build unsigned inputs (CLSAG filled after signing_hash).
+        struct Prepared {
+            input: OwnedOutput,
+            ring: Vec<RingMember>,
+            position: usize,
+            ring_blob: Vec<u8>,
+            pseudo_blinding: [u8; 32],
+            pseudo_commitment: [u8; 32],
+        }
+        let mut prepared = Vec::with_capacity(inputs.len());
+        for (input, (decoys, pb)) in
+            inputs.iter().zip(rings_decoys.iter().zip(pseudo_blindings.iter()))
+        {
+            if decoys.is_empty() {
+                return Err(WalletError::RingTooSmall);
+            }
+            let mut ring = decoys.clone();
+            ring.push(RingMember {
+                global_index: input.global_index,
+                one_time_key: input.one_time_key,
+                commitment: input.commitment,
+            });
+            ring.sort_by_key(|m| m.global_index);
+            ring.dedup_by_key(|m| m.global_index);
+            let position = ring
+                .iter()
+                .position(|m| m.global_index == input.global_index)
+                .ok_or(WalletError::RingTooSmall)?;
+            let mut ring_blob = Vec::with_capacity(ring.len() * 64);
+            for m in &ring {
+                ring_blob.extend_from_slice(&m.one_time_key);
+                ring_blob.extend_from_slice(&m.commitment);
+            }
+            let pseudo_commitment =
+                crypto::commit(input.amount, pb).ok_or(WalletError::Crypto("commit"))?;
+            prepared.push(Prepared {
+                input: input.clone(),
+                ring,
+                position,
+                ring_blob,
+                pseudo_blinding: *pb,
+                pseudo_commitment,
+            });
+        }
+
+        // Canonical order by key image (matches chain rule).
+        prepared.sort_by(|a, b| a.input.key_image.cmp(&b.input.key_image));
+
         let (proof, _commits) = crypto::prove_range(&[send_amount, change], &[b0, b1])
             .ok_or(WalletError::Crypto("range proof"))?;
 
-        let ring_input = RingInput {
-            ring: bounded(ring_indices)?,
-            key_image: input.key_image,
-            pseudo_commitment,
-            clsag: bounded(Vec::new())?,
-        };
+        let ring_inputs: Vec<RingInput> = prepared
+            .iter()
+            .map(|p| {
+                let indices: Vec<u64> = p.ring.iter().map(|m| m.global_index).collect();
+                Ok(RingInput {
+                    ring: bounded(indices)?,
+                    key_image: p.input.key_image,
+                    pseudo_commitment: p.pseudo_commitment,
+                    clsag: bounded(Vec::new())?,
+                })
+            })
+            .collect::<Result<_, WalletError>>()?;
+
         let mut tx = TransferTx {
-            inputs: bounded(vec![ring_input])?,
+            inputs: bounded(ring_inputs)?,
             outputs: bounded(vec![out0, out1])?,
             tx_pubkey,
             range_proof: bounded(proof)?,
             fee,
         };
 
-        // Sign every input's CLSAG over the binding hash of the whole tx.
         let msg = pallet_ringct::signing_hash(&tx);
-        let sig = clsag::sign(
-            &msg,
-            &ring_blob,
-            position,
-            &input.secret,
-            &input.blinding,
-            &pseudo_blinding,
-        )
-        .ok_or(WalletError::Crypto("clsag sign"))?;
-        debug_assert_eq!(sig.key_image, input.key_image);
-        debug_assert_eq!(sig.pseudo_commitment, pseudo_commitment);
-        tx.inputs[0].clsag = bounded(sig.signature)?;
+        for (i, p) in prepared.iter().enumerate() {
+            let sig = clsag::sign(
+                &msg,
+                &p.ring_blob,
+                p.position,
+                &p.input.secret,
+                &p.input.blinding,
+                &p.pseudo_blinding,
+            )
+            .ok_or(WalletError::Crypto("clsag sign"))?;
+            debug_assert_eq!(sig.key_image, p.input.key_image);
+            debug_assert_eq!(sig.pseudo_commitment, p.pseudo_commitment);
+            tx.inputs[i].clsag = bounded(sig.signature)?;
+        }
         Ok(tx)
     }
 
