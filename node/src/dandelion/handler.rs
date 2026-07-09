@@ -151,7 +151,9 @@ async fn handle_notification<B, C, P, N, S>(
                 .map_or(ValidationResult::Reject, |_| ValidationResult::Accept);
             let _ = result_tx.send(result);
         }
-        NotificationEvent::NotificationStreamOpened { peer, handshake, .. } => {
+        NotificationEvent::NotificationStreamOpened {
+            peer, handshake, ..
+        } => {
             if network.peer_role(peer, handshake).is_none() {
                 return;
             }
@@ -176,16 +178,7 @@ async fn handle_notification<B, C, P, N, S>(
                     return;
                 }
             };
-            on_stem_received(
-                peer,
-                msg,
-                notifications,
-                engine,
-                client,
-                pool,
-                peers,
-            )
-            .await;
+            on_stem_received(peer, msg, notifications, engine, client, pool, peers).await;
         }
     }
 }
@@ -201,12 +194,10 @@ fn handle_sync_event<N>(
 {
     match event {
         SyncEvent::PeerConnected(remote) => {
-            let addr = multiaddr::Multiaddr::empty()
-                .with(multiaddr::Protocol::P2p(remote.into()));
-            if let Err(e) = network.add_peers_to_reserved_set(
-                protocol_name.clone(),
-                std::iter::once(addr).collect(),
-            ) {
+            let addr = multiaddr::Multiaddr::empty().with(multiaddr::Protocol::P2p(remote.into()));
+            if let Err(e) = network
+                .add_peers_to_reserved_set(protocol_name.clone(), std::iter::once(addr).collect())
+            {
                 debug!(target: LOG, "add reserved peer: {e}");
             }
             let id = remote.to_base58();

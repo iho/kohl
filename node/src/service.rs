@@ -20,9 +20,7 @@ use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 use sc_telemetry::{Telemetry, TelemetryWorker};
 use sp_runtime::traits::Block as BlockT;
 
-use crate::dandelion::{
-    self, DandelionConfig, DandelionEngine, SharedEngine, StemGate,
-};
+use crate::dandelion::{self, DandelionConfig, DandelionEngine, SharedEngine, StemGate};
 use sp_blockchain::HeaderBackend;
 
 #[cfg(feature = "randomx")]
@@ -67,8 +65,7 @@ type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 type BoxBlockImport = sc_consensus::BoxBlockImport<Block>;
 
 /// Pool type used by the node: stock Substrate pool gated by Dandelion++ stem state.
-pub type FullPool =
-    StemGate<sc_transaction_pool::TransactionPoolHandle<Block, FullClient>>;
+pub type FullPool = StemGate<sc_transaction_pool::TransactionPoolHandle<Block, FullClient>>;
 
 pub type Service = sc_service::PartialComponents<
     FullClient,

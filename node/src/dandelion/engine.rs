@@ -127,7 +127,12 @@ impl DandelionEngine {
     /// Enter stem phase for a newly originated or stem-received tx.
     ///
     /// Returns `false` if the hash was already known (stem or recently seen).
-    pub fn enter_stem(&mut self, hash: impl Into<String>, from: Option<String>, now: Instant) -> bool {
+    pub fn enter_stem(
+        &mut self,
+        hash: impl Into<String>,
+        from: Option<String>,
+        now: Instant,
+    ) -> bool {
         let hash = hash.into();
         if self.stem.contains_key(&hash) {
             return false;

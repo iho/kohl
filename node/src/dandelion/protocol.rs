@@ -39,7 +39,10 @@ pub fn notification_config<B, Net>(
     fork_id: Option<&str>,
     metrics: NotificationMetrics,
     peer_store: Arc<dyn PeerStoreProvider>,
-) -> (Net::NotificationProtocolConfig, Box<dyn NotificationService>)
+) -> (
+    Net::NotificationProtocolConfig,
+    Box<dyn NotificationService>,
+)
 where
     B: BlockT,
     Net: NetworkBackend<B, <B as BlockT>::Hash>,
