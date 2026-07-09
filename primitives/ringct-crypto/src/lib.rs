@@ -33,8 +33,23 @@ extern crate alloc;
 
 #[cfg(feature = "std")]
 pub mod clsag;
+/// FCMP+SA+L verify (PR-4 host stub; real composition PR-5c).
+///
+/// Available under `std` (host) like CLSAG. Runtime calls via
+/// [`RingctCrypto::verify_fcmp_v1`].
+#[cfg(feature = "std")]
+pub mod fcmp;
 #[cfg(feature = "std")]
 pub mod stealth;
+
+/// FCMP research spike (PR-0). Feature-gated; **not** consensus-wired.
+///
+/// ```text
+/// cargo test -p ringct-crypto --features fcmp-spike
+/// cargo bench -p ringct-crypto --features fcmp-spike --bench fcmp_spike
+/// ```
+#[cfg(all(feature = "std", feature = "fcmp-spike"))]
+pub mod fcmp_spike;
 
 /// The set of host functions to register in the node executor so the WASM
 /// runtime can call the native RingCT verifiers (BLUEPRINT.md §1.6).
@@ -284,6 +299,28 @@ pub trait RingctCrypto {
         signature: PassFatPointerAndRead<&[u8]>,
     ) -> bool {
         clsag::verify(msg, ring, pseudo_commitment, key_image, signature)
+    }
+
+    /// FCMP+SA+L membership/spend proof for one input (design § verification).
+    ///
+    /// **PR-5 interim (`FCMP0001`):** full mature-set membership under the
+    /// Path A Merkle root + CLSAG SA/link/re-blind. Transparent Merkle paths
+    /// are never valid (D17). Anonymity set size ≤ `MAX_FCMP_ANON_SET` (64).
+    /// Do not change this `v1` surface; add `v2` on break.
+    ///
+    /// * `msg` — 32-byte tx binding hash (`kohl/transfer/v4` when wired)
+    /// * `membership_root` — 32-byte tree root
+    /// * `pseudo_commitment` — 32-byte `C'`
+    /// * `key_image` — 32-byte `I` (must equal `clsag::key_image`)
+    /// * `proof` — ≤ `MAX_FCMP_PROOF_BYTES`
+    fn verify_fcmp_v1(
+        msg: PassFatPointerAndRead<&[u8]>,
+        membership_root: PassFatPointerAndRead<&[u8]>,
+        pseudo_commitment: PassFatPointerAndRead<&[u8]>,
+        key_image: PassFatPointerAndRead<&[u8]>,
+        proof: PassFatPointerAndRead<&[u8]>,
+    ) -> bool {
+        fcmp::verify(msg, membership_root, pseudo_commitment, key_image, proof)
     }
 
     /// Canonical non-identity Ristretto point? Used for one-time key hygiene.

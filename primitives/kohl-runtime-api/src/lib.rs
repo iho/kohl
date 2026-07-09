@@ -9,7 +9,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use pallet_ringct::StoredOutput;
+use pallet_ringct::{MembershipBackfillStatus, StoredOutput};
 use sp_core::U256;
 
 /// Block number type used across the API surface.
@@ -21,7 +21,8 @@ sp_api::decl_runtime_apis! {
         fn difficulty() -> U256;
     }
 
-    /// Wallet-facing queries for scanning and fee estimation (BLUEPRINT.md §4.4).
+    /// Wallet-facing queries for scanning, fees, and membership tree reads
+    /// (BLUEPRINT.md §4.4; FCMP PR-3).
     pub trait RingCtApi {
         /// Outputs (with their global indices) created in `[from, to]`.
         /// The wallet-scanning feed: clients pull ranges and test view tags.
@@ -40,5 +41,34 @@ sp_api::decl_runtime_apis! {
 
         /// Current minimum fee per encoded byte.
         fn min_fee_per_byte() -> u64;
+
+        // ---- Membership tree (Path A scaffolding; PR-3) ----
+
+        /// Current membership Merkle root.
+        fn membership_root() -> [u8; 32];
+
+        /// Historical root at the end of `block`, if retained in the window.
+        fn membership_root_at(block: BlockNumber) -> Option<[u8; 32]>;
+
+        /// Number of grown tree slots (`TreeSlots`).
+        fn tree_slots() -> u64;
+
+        /// Whether slot `index` has been filled with `L(P,C)`.
+        fn is_admitted(index: u64) -> bool;
+
+        /// Leaf digest at `index` (`EMPTY` or `L`), if the slot exists.
+        fn membership_leaf_digest(index: u64) -> Option<[u8; 32]>;
+
+        /// SCALE `Vec<[u8; 32]>` of digests for `0..tree_slots` (v1 full dump).
+        fn membership_frontier() -> Vec<u8>;
+
+        /// Spend-path mode: `1` = Building (CLSAG + tree), `2` = FcmpOnly.
+        fn fcmp_mode() -> u8;
+
+        /// Round-robin admit scan cursor.
+        fn admit_scan_cursor() -> u64;
+
+        /// Lag / catch-up snapshot for operators and provers.
+        fn membership_backfill_status() -> MembershipBackfillStatus;
     }
 }

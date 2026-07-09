@@ -44,6 +44,41 @@ pub const MAX_RANGE_PROOF_BYTES: u32 = 1024;
 /// format finalized with stealth-address ECDH in Phase 3).
 pub const MAX_PAYLOAD_BYTES: u32 = 80;
 
+// ---- FCMP Path A membership tree (PR-1 scaffolding; consensus-critical) ----
+
+/// Max `EMPTY → L(P,C)` fills per block (finalize; never shared with live grow).
+pub const FCMP_ADMIT_MAX_LEAVES_PER_BLOCK: u32 = 64;
+
+/// Max sequential catch-up `grow EMPTY` ops per block while lagging.
+pub const FCMP_GROW_CATCHUP_MAX_PER_BLOCK: u32 = 64;
+
+/// How long historical membership roots are retained for wallet anchoring.
+pub const FCMP_ROOT_MAX_AGE_BLOCKS: u32 = 64;
+
+/// Occupied-leaf preimage domain: `LEAF_DOM || P || C`.
+pub const FCMP_LEAF_DOM: &[u8] = b"kohl/fcmp/leaf/v1";
+
+/// Immature / not-yet-admitted leaf placeholder domain.
+pub const FCMP_EMPTY_LEAF_DOM: &[u8] = b"kohl/fcmp/leaf/empty/v1";
+
+/// Internal Merkle node domain: `MERKLE_DOM || left || right`.
+pub const FCMP_MERKLE_DOM: &[u8] = b"kohl/fcmp/merkle/v1";
+
+/// Missing child beyond `TreeSlots` (depth padding).
+pub const FCMP_MERKLE_EMPTY_DOM: &[u8] = b"kohl/fcmp/merkle/v1/empty";
+
+/// Interim max FCMP inputs per tx (design D15). Revisit after PR-5 benches.
+pub const MAX_FCMP_INPUTS: u32 = 4;
+
+/// Provisional max FCMP proof size per input (12 KiB; design D15).
+/// Hard D2 gate is 16 KiB; keep headroom under 300 KiB blocks.
+pub const MAX_FCMP_PROOF_BYTES: u32 = 12_288;
+
+/// Interim max mature-set size for PR-5 full-set CLSAG under the Merkle root.
+/// Proof packs digests + ring + CLSAG; 64 fits in [`MAX_FCMP_PROOF_BYTES`].
+/// Larger trees need Curve Trees / Path B (or a later IPA composition).
+pub const MAX_FCMP_ANON_SET: u32 = 64;
+
 /// Block reward as a function of coins emitted so far:
 /// `max(TAIL_REWARD, (MAX_CURVE_SUPPLY - emitted) >> EMISSION_SHIFT)`.
 ///

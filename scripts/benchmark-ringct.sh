@@ -65,5 +65,7 @@ fi
 
 echo "==> Machine weights written to $OUT"
 echo "    Compare with pallets/ringct/src/weights.rs and merge if desired."
-echo "    Engineered WeightInfo stays parametric (inputs/outputs/ring_size);"
-echo "    machine file is the omni-style fixed worst-case measurement."
+echo "    Engineered WeightInfo stays parametric (inputs/outputs/ring_size"
+echo "    + transfer_fcmp(tree_slots) / maintain_membership — PR-6)."
+echo "    Host-crypto microbenches: cargo bench -p ringct-crypto --bench crypto -- fcmp"
+echo "    machine file is the omni-style fixed worst-case measurement (CLSAG extrinsics)."

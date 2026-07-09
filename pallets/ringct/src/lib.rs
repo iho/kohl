@@ -19,6 +19,15 @@
 //! the fee is the single public amount and goes to the block author via the
 //! coinbase inherent. Heavy verification (CLSAG, Bulletproofs, balance) runs
 //! natively through versioned host functions (BLUEPRINT.md §1.6).
+//!
+//! **Membership tree scaffolding (PR-1/PR-2):** a Path A blake2 sparse Merkle
+//! tree is maintained over global output indices (EMPTY until mature, then
+//! `L(P,C)`). PR-2 adds lag-mode catch-up polish (`AdmitScanCursor`, multi-block
+//! grow/fill, status helpers). Spents remain CLSAG until FCMP-only.
+//!
+//! **PR-6 weights:** [`weights::WeightInfo`] includes `transfer_fcmp` /
+//! `authorize_fcmp` / `maintain_membership` budgets for the interim `FCMP0001`
+//! path (wired in PR-7).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -29,15 +38,22 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::{pallet_prelude::*, BoundedVec};
 use frame_system::pallet_prelude::*;
 use ringct_primitives::{
-    block_reward, CLSAG_MAX_BYTES, MAX_INPUTS, MAX_OUTPUTS, MAX_PAYLOAD_BYTES,
-    MAX_RANGE_PROOF_BYTES, MAX_RING_SIZE,
+    block_reward, CLSAG_MAX_BYTES, FCMP_ADMIT_MAX_LEAVES_PER_BLOCK,
+    FCMP_GROW_CATCHUP_MAX_PER_BLOCK, FCMP_ROOT_MAX_AGE_BLOCKS, MAX_INPUTS, MAX_OUTPUTS,
+    MAX_PAYLOAD_BYTES, MAX_RANGE_PROOF_BYTES, MAX_RING_SIZE,
 };
 use scale_info::TypeInfo;
 use sp_runtime::transaction_validity::{InvalidTransaction, ValidTransaction};
 
 pub use pallet::*;
+pub mod membership;
 pub mod weights;
 pub use weights::WeightInfo;
+
+/// Dev / Building: tree maintained, spends still CLSAG (current mainnet code path).
+pub const FCMP_MODE_BUILDING: u8 = 1;
+/// Production target: FCMP-only spends (not enabled yet).
+pub const FCMP_MODE_FCMP_ONLY: u8 = 2;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
@@ -237,6 +253,57 @@ pub mod pallet {
     #[pallet::storage]
     pub type CoinbaseDone<T> = StorageValue<_, bool, ValueQuery>;
 
+    // ---- FCMP Path A membership tree (PR-1/PR-2; maintenance only) ----
+
+    /// Number of tree slots grown (`0..TreeSlots` have leaf digests).
+    /// Steady state: equals `NextOutputIndex`. Lag mode: may trail.
+    #[pallet::storage]
+    pub type TreeSlots<T> = StorageValue<_, u64, ValueQuery>;
+
+    /// Leaf digests for slots `i < TreeSlots` (`EMPTY` or `L(P,C)` hash).
+    #[pallet::storage]
+    pub type MembershipLeafDigest<T: Config> =
+        StorageMap<_, Twox64Concat, u64, [u8; 32], OptionQuery>;
+
+    /// Whether slot `i` has been filled with `L(P,C)` (mature admission).
+    #[pallet::storage]
+    pub type Admitted<T: Config> = StorageMap<_, Twox64Concat, u64, (), OptionQuery>;
+
+    /// Resume cursor for fill scans (PR-2). Walks round-robin over
+    /// `0..TreeSlots` so mature leaves are found without a full prefix scan
+    /// every block, while still allowing sparse admit (skip immature lower
+    /// indices and come back later).
+    #[pallet::storage]
+    pub type AdmitScanCursor<T> = StorageValue<_, u64, ValueQuery>;
+
+    /// Current membership Merkle root over sparse slots.
+    #[pallet::storage]
+    pub type MembershipRoot<T: Config> = StorageValue<_, [u8; 32], ValueQuery, EmptyMembershipRoot>;
+
+    /// Historical roots by block number (wallet anchoring / reorg window).
+    #[pallet::storage]
+    pub type MembershipRootAt<T: Config> =
+        StorageMap<_, Twox64Concat, BlockNumberFor<T>, [u8; 32], OptionQuery>;
+
+    /// Default empty-tree root (Path A `EMPTY_MEMBERSHIP_ROOT`).
+    pub struct EmptyMembershipRoot;
+    impl Get<[u8; 32]> for EmptyMembershipRoot {
+        fn get() -> [u8; 32] {
+            membership::empty_membership_root()
+        }
+    }
+
+    /// Snapshot of membership backfill / lag state (PR-2; tests + future RPC).
+    #[derive(Clone, PartialEq, Eq, Debug, Encode, Decode, TypeInfo, MaxEncodedLen)]
+    pub struct MembershipBackfillStatus {
+        pub tree_slots: u64,
+        pub next_output_index: u64,
+        /// `tree_slots < next_output_index` — catch-up grow still needed.
+        pub lagging: bool,
+        pub admit_scan_cursor: u64,
+        pub membership_root: [u8; 32],
+    }
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -255,6 +322,17 @@ pub mod pallet {
             output_count: u32,
             reward: u64,
             fees: u64,
+        },
+        /// Membership tree maintenance ran at end of block.
+        MembershipTreeUpdated {
+            tree_slots: u64,
+            next_output_index: u64,
+            root: [u8; 32],
+            admitted_this_block: u32,
+            catchup_grown: u32,
+            /// Still lagging after this block's catch-up budget.
+            lagging: bool,
+            admit_scan_cursor: u64,
         },
     }
 
@@ -298,6 +376,29 @@ pub mod pallet {
         fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
             CoinbaseDone::<T>::kill();
             T::DbWeight::get().writes(1)
+        }
+
+        /// Fill mature EMPTY→L leaves (budgeted), catch-up grow if lagging,
+        /// recompute root, record `MembershipRootAt`.
+        fn on_finalize(n: BlockNumberFor<T>) {
+            let (admitted, grown) = Self::maintain_membership_tree();
+            let root = MembershipRoot::<T>::get();
+            MembershipRootAt::<T>::insert(n, root);
+            // Prune roots outside the anchoring window.
+            let max_age = BlockNumberFor::<T>::from(FCMP_ROOT_MAX_AGE_BLOCKS);
+            if n > max_age {
+                MembershipRootAt::<T>::remove(n - max_age);
+            }
+            let status = Self::membership_backfill_status();
+            Self::deposit_event(Event::MembershipTreeUpdated {
+                tree_slots: status.tree_slots,
+                next_output_index: status.next_output_index,
+                root: status.membership_root,
+                admitted_this_block: admitted,
+                catchup_grown: grown,
+                lagging: status.lagging,
+                admit_scan_cursor: status.admit_scan_cursor,
+            });
         }
     }
 
@@ -388,11 +489,12 @@ pub mod pallet {
             let first = NextOutputIndex::<T>::get();
             let mut next = first;
             for out in &outputs {
+                let commitment = crypto_host::value_commitment_v1(out.amount);
                 Outputs::<T>::insert(
                     next,
                     StoredOutput {
                         one_time_key: out.one_time_key,
-                        commitment: crypto_host::value_commitment_v1(out.amount),
+                        commitment,
                         tx_pubkey,
                         view_tag: out.view_tag,
                         payload: Default::default(),
@@ -401,6 +503,7 @@ pub mod pallet {
                         coinbase: true,
                     },
                 );
+                Self::maybe_grow_empty_on_create(next);
                 next += 1;
             }
             NextOutputIndex::<T>::put(next);
@@ -612,6 +715,7 @@ pub mod pallet {
                         coinbase: false,
                     },
                 );
+                Self::maybe_grow_empty_on_create(next);
                 next += 1;
             }
             NextOutputIndex::<T>::put(next);
@@ -623,6 +727,185 @@ pub mod pallet {
                 fee: tx.fee,
             });
             Ok(())
+        }
+
+        // ---- Membership tree (PR-1 / PR-2) ------------------------------
+
+        /// Lag-aware grow: append EMPTY only when `index == TreeSlots`
+        /// (steady state). While lagging (`TreeSlots < index`), no-op.
+        pub(crate) fn maybe_grow_empty_on_create(index: u64) {
+            if TreeSlots::<T>::get() != index {
+                return;
+            }
+            Self::grow_empty_slot();
+            // Keep root current mid-block for queries (finalize refreshes too).
+            Self::refresh_membership_root();
+        }
+
+        fn grow_empty_slot() {
+            let i = TreeSlots::<T>::get();
+            // Only grow when the corresponding output already exists (lag
+            // catch-up) or is being minted at this index (steady state).
+            MembershipLeafDigest::<T>::insert(i, membership::empty_leaf_hash());
+            TreeSlots::<T>::put(i + 1);
+        }
+
+        /// Fill mature slots EMPTY→L (cursor scan), then catch-up grow.
+        /// Returns `(admitted_count, catchup_grown)`.
+        ///
+        /// Order is consensus-critical (D16): **fill first**, then grow, so
+        /// high lag never starves mature admissions.
+        pub(crate) fn maintain_membership_tree() -> (u32, u32) {
+            let admitted = Self::admit_mature_leaves_budgeted();
+            let grown = Self::catchup_grow_budgeted();
+            Self::refresh_membership_root();
+            (admitted, grown)
+        }
+
+        /// Round-robin fill from [`AdmitScanCursor`] up to
+        /// `FCMP_ADMIT_MAX_LEAVES_PER_BLOCK`.
+        fn admit_mature_leaves_budgeted() -> u32 {
+            let now = frame_system::Pallet::<T>::block_number();
+            let slots = TreeSlots::<T>::get();
+            if slots == 0 {
+                AdmitScanCursor::<T>::kill();
+                return 0;
+            }
+
+            let mut admitted = 0u32;
+            let mut i = AdmitScanCursor::<T>::get() % slots;
+            // At most one full lap so immature slots are retried next block
+            // without unbounded DB reads when everything is already admitted.
+            let mut scanned = 0u64;
+
+            while admitted < FCMP_ADMIT_MAX_LEAVES_PER_BLOCK && scanned < slots {
+                if !Admitted::<T>::contains_key(i) {
+                    if let Some(out) = Outputs::<T>::get(i) {
+                        if Self::output_is_mature(&out, now) {
+                            let digest = membership::leaf_hash(&out.one_time_key, &out.commitment);
+                            MembershipLeafDigest::<T>::insert(i, digest);
+                            Admitted::<T>::insert(i, ());
+                            admitted += 1;
+                        }
+                    }
+                }
+                i = i.saturating_add(1);
+                if i >= slots {
+                    i = 0;
+                }
+                scanned += 1;
+            }
+
+            AdmitScanCursor::<T>::put(i);
+            admitted
+        }
+
+        /// Sequential catch-up grow while `TreeSlots < NextOutputIndex`.
+        /// Sole `TreeSlots` advancer in lag mode (D16).
+        fn catchup_grow_budgeted() -> u32 {
+            let mut grown = 0u32;
+            let next_out = NextOutputIndex::<T>::get();
+            while grown < FCMP_GROW_CATCHUP_MAX_PER_BLOCK {
+                let slots_now = TreeSlots::<T>::get();
+                if slots_now >= next_out {
+                    break;
+                }
+                // Output must already exist (minted earlier without tree grow).
+                debug_assert!(
+                    Outputs::<T>::contains_key(slots_now),
+                    "catch-up grow requires Outputs[TreeSlots]"
+                );
+                Self::grow_empty_slot();
+                grown += 1;
+            }
+            grown
+        }
+
+        pub(crate) fn refresh_membership_root() {
+            let n = TreeSlots::<T>::get();
+            let mut leaves = Vec::with_capacity(n as usize);
+            for i in 0..n {
+                let d =
+                    MembershipLeafDigest::<T>::get(i).unwrap_or_else(membership::empty_leaf_hash);
+                leaves.push(d);
+            }
+            MembershipRoot::<T>::put(membership::root_from_leaves(&leaves));
+        }
+
+        fn output_is_mature(out: &StoredOutput<BlockNumberFor<T>>, now: BlockNumberFor<T>) -> bool {
+            let age = if out.coinbase {
+                T::CoinbaseMaturity::get()
+            } else {
+                T::SpendableAge::get()
+            };
+            now >= out.height + age
+        }
+
+        /// `TreeSlots < NextOutputIndex` — historical / reorg lag.
+        pub fn is_membership_lagging() -> bool {
+            TreeSlots::<T>::get() < NextOutputIndex::<T>::get()
+        }
+
+        /// Slots have caught the output tip (steady state for grow-on-create).
+        pub fn is_membership_slot_caught_up() -> bool {
+            !Self::is_membership_lagging()
+        }
+
+        /// Snapshot for operators / runtime API (PR-3).
+        pub fn membership_backfill_status() -> MembershipBackfillStatus {
+            MembershipBackfillStatus {
+                tree_slots: TreeSlots::<T>::get(),
+                next_output_index: NextOutputIndex::<T>::get(),
+                lagging: Self::is_membership_lagging(),
+                admit_scan_cursor: AdmitScanCursor::<T>::get(),
+                membership_root: MembershipRoot::<T>::get(),
+            }
+        }
+
+        /// Public helpers for tests / runtime API / RPC.
+        pub fn membership_root() -> [u8; 32] {
+            MembershipRoot::<T>::get()
+        }
+
+        pub fn membership_root_at(at: BlockNumberFor<T>) -> Option<[u8; 32]> {
+            MembershipRootAt::<T>::get(at)
+        }
+
+        pub fn tree_slots() -> u64 {
+            TreeSlots::<T>::get()
+        }
+
+        pub fn admit_scan_cursor() -> u64 {
+            AdmitScanCursor::<T>::get()
+        }
+
+        pub fn is_admitted(index: u64) -> bool {
+            Admitted::<T>::contains_key(index)
+        }
+
+        pub fn membership_leaf_digest(index: u64) -> Option<[u8; 32]> {
+            MembershipLeafDigest::<T>::get(index)
+        }
+
+        /// SCALE-encoded `Vec<[u8; 32]>` of leaf digests for `0..TreeSlots`.
+        ///
+        /// v1 full dump for provers (O(n)); replace with peak/frontier codec
+        /// when tree size warrants it.
+        pub fn membership_frontier() -> Vec<u8> {
+            use codec::Encode;
+            let n = TreeSlots::<T>::get();
+            let mut leaves = Vec::with_capacity(n as usize);
+            for i in 0..n {
+                leaves.push(
+                    MembershipLeafDigest::<T>::get(i).unwrap_or_else(membership::empty_leaf_hash),
+                );
+            }
+            leaves.encode()
+        }
+
+        /// Spend-path mode. Currently always [`FCMP_MODE_BUILDING`].
+        pub fn fcmp_mode() -> u8 {
+            FCMP_MODE_BUILDING
         }
     }
 }

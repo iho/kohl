@@ -119,11 +119,89 @@ fn bench_range_proof(c: &mut Criterion) {
     group.finish();
 }
 
+/// FCMP0001 interim: full mature-set membership + CLSAG (PR-5/PR-6).
+fn bench_fcmp(c: &mut Criterion) {
+    use ringct_crypto::fcmp::{self, ProveWitness, RingMember};
+
+    let msg = [11u8; 32];
+    let prepared: Vec<_> = [4usize, 16, 32, 64]
+        .into_iter()
+        .map(|n| {
+            let empty = fcmp::empty_leaf_hash();
+            let mut digests = vec![empty; n];
+            let mut admitted = Vec::with_capacity(n);
+            let mut real_secret = [0u8; 32];
+            let mut real_blinding = [0u8; 32];
+            let real_pos = n / 2;
+            for i in 0..n {
+                let (sk, pk) = crypto::random_secret_key();
+                let blinding = if i == real_pos {
+                    real_secret = sk;
+                    real_blinding = crypto::random_blinding();
+                    real_blinding
+                } else {
+                    let _ = sk;
+                    crypto::random_blinding()
+                };
+                let cmt = crypto::commit(1_000 + i as u64, &blinding).unwrap();
+                digests[i] = fcmp::leaf_hash(&pk, &cmt);
+                admitted.push(RingMember {
+                    one_time_key: pk,
+                    commitment: cmt,
+                    tree_index: i as u64,
+                });
+            }
+            let root = fcmp::root_from_leaves(&digests);
+            let witness = ProveWitness {
+                digests,
+                admitted,
+                real_index: real_pos,
+                secret_key: real_secret,
+                input_blinding: real_blinding,
+                pseudo_blinding: crypto::random_blinding(),
+            };
+            let res = fcmp::prove(&msg, &witness).expect("prove");
+            (n, root, witness, res)
+        })
+        .collect();
+
+    {
+        let mut verify_g = c.benchmark_group("fcmp_verify");
+        for (n, root, _w, res) in &prepared {
+            verify_g.bench_with_input(BenchmarkId::from_parameter(n), n, |b, _| {
+                b.iter(|| {
+                    assert!(fcmp::verify(
+                        black_box(&msg),
+                        black_box(root),
+                        black_box(&res.pseudo_commitment),
+                        black_box(&res.key_image),
+                        black_box(&res.proof),
+                    ));
+                });
+            });
+        }
+        verify_g.finish();
+    }
+
+    {
+        let mut prove_g = c.benchmark_group("fcmp_prove");
+        for (n, _root, witness, _res) in &prepared {
+            prove_g.bench_with_input(BenchmarkId::from_parameter(n), n, |b, _| {
+                b.iter(|| {
+                    fcmp::prove(black_box(&msg), black_box(witness)).expect("prove");
+                });
+            });
+        }
+        prove_g.finish();
+    }
+}
+
 criterion_group!(
     benches,
     bench_clsag_verify,
     bench_clsag_sign,
     bench_balance,
-    bench_range_proof
+    bench_range_proof,
+    bench_fcmp
 );
 criterion_main!(benches);

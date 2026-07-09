@@ -946,3 +946,492 @@ fn tx_pubkey_and_payload_are_bound_by_clsag() {
         );
     });
 }
+
+// ---- PR-1 membership tree scaffolding ------------------------------------
+
+use crate::membership;
+use crate::StoredOutput;
+
+#[test]
+fn membership_tree_grows_with_coinbase_and_matches_next_index() {
+    new_test_ext().execute_with(|| {
+        assert_eq!(RingCt::tree_slots(), 0);
+        assert_eq!(
+            RingCt::membership_root(),
+            membership::empty_membership_root()
+        );
+        let bed = mint_ring_bed(RING);
+        assert_eq!(RingCt::tree_slots(), RING as u64);
+        assert_eq!(crate::NextOutputIndex::<Test>::get(), RingCt::tree_slots());
+        // Immature coinbases are EMPTY slots, not admitted.
+        for o in &bed {
+            assert!(!RingCt::is_admitted(o.index));
+        }
+        // Mint height=1 → mature when now >= 61; need on_finalize at 61.
+        run_to_block(62);
+        for o in &bed {
+            assert!(
+                RingCt::is_admitted(o.index),
+                "coinbase {} should admit at maturity",
+                o.index
+            );
+        }
+        assert_ne!(
+            RingCt::membership_root(),
+            membership::empty_membership_root()
+        );
+    });
+}
+
+#[test]
+fn membership_sparse_admit_transfer_not_blocked_by_immature_coinbase() {
+    new_test_ext().execute_with(|| {
+        // Synthetic slots: coinbase at 0 immature; non-coinbase at 1 mature.
+        let now = 100u64;
+        System::set_block_number(now);
+        let (p0, _) = (crypto::random_secret_key().1, ());
+        let (p1, _) = (crypto::random_secret_key().1, ());
+        let c0 = crypto::value_commitment(50);
+        let c1 = crypto::commit(40, &crypto::random_blinding()).unwrap();
+
+        crate::Outputs::<Test>::insert(
+            0,
+            StoredOutput {
+                one_time_key: p0,
+                commitment: c0,
+                tx_pubkey: crypto::random_secret_key().1,
+                view_tag: 0,
+                payload: Default::default(),
+                amount: Some(50),
+                height: now, // coinbase needs +60
+                coinbase: true,
+            },
+        );
+        crate::Outputs::<Test>::insert(
+            1,
+            StoredOutput {
+                one_time_key: p1,
+                commitment: c1,
+                tx_pubkey: crypto::random_secret_key().1,
+                view_tag: 0,
+                payload: Default::default(),
+                amount: None,
+                height: now - 10, // exactly SpendableAge
+                coinbase: false,
+            },
+        );
+        crate::NextOutputIndex::<Test>::put(2);
+        crate::MembershipLeafDigest::<Test>::insert(0, membership::empty_leaf_hash());
+        crate::MembershipLeafDigest::<Test>::insert(1, membership::empty_leaf_hash());
+        crate::TreeSlots::<Test>::put(2);
+
+        let (adm, grown) = RingCt::maintain_membership_tree();
+        assert_eq!(grown, 0);
+        assert_eq!(adm, 1);
+        assert!(!RingCt::is_admitted(0), "immature coinbase must stay EMPTY");
+        assert!(RingCt::is_admitted(1), "mature transfer leaf admits");
+    });
+}
+
+#[test]
+fn membership_coinbase_not_admitted_before_maturity() {
+    new_test_ext().execute_with(|| {
+        let bed = mint_ring_bed(1);
+        // Finalize through block 60: now=60 < height 1 + 60 → still immature.
+        run_to_block(61);
+        assert!(
+            !RingCt::is_admitted(bed[0].index),
+            "coinbase must not admit before CoinbaseMaturity"
+        );
+        // Finalize block 61: now=61 >= 61 → admit.
+        run_to_block(62);
+        assert!(RingCt::is_admitted(bed[0].index));
+    });
+}
+
+#[test]
+fn membership_lag_tip_mint_no_panic_and_catchup() {
+    new_test_ext().execute_with(|| {
+        let _ = mint_ring_bed(RING);
+        assert_eq!(RingCt::tree_slots(), RING as u64);
+        run_to_block(System::block_number() + 1); // clear CoinbaseDone
+
+        // Simulate Building HF: tree wiped while outputs remain.
+        crate::TreeSlots::<Test>::put(0);
+        for i in 0..RING as u64 {
+            crate::MembershipLeafDigest::<Test>::remove(i);
+            crate::Admitted::<Test>::remove(i);
+        }
+
+        // Tip mint while lagging: TreeSlots=0, index=RING — grow no-ops.
+        let reward = block_reward(crate::Emitted::<Test>::get());
+        let tip = crate::NextOutputIndex::<Test>::get();
+        assert_ok!(RingCt::coinbase(
+            RuntimeOrigin::none(),
+            bounded::<_, 8>(vec![CoinbaseOutput {
+                one_time_key: crypto::random_secret_key().1,
+                amount: reward,
+                view_tag: 0,
+            }]),
+            crypto::random_secret_key().1,
+        ));
+        assert_eq!(
+            crate::NextOutputIndex::<Test>::get(),
+            tip + 1,
+            "output still minted"
+        );
+        assert_eq!(
+            RingCt::tree_slots(),
+            0,
+            "lagging tip mint must not grow out of order"
+        );
+
+        // Catch-up grow on finalize path.
+        let (_adm, grown) = RingCt::maintain_membership_tree();
+        assert!(grown > 0);
+        assert!(RingCt::tree_slots() > 0);
+        assert!(RingCt::tree_slots() <= crate::NextOutputIndex::<Test>::get());
+    });
+}
+
+#[test]
+fn membership_fill_budget_does_not_block_steady_state_grow() {
+    new_test_ext().execute_with(|| {
+        // 80 mature EMPTY slots + fill budget 64; second maintain finishes rest.
+        let n = 80u64;
+        let now = 50u64;
+        System::set_block_number(now);
+        for i in 0..n {
+            let pk = crypto::random_secret_key().1;
+            let c = crypto::commit(i + 1, &crypto::random_blinding()).unwrap();
+            crate::Outputs::<Test>::insert(
+                i,
+                StoredOutput {
+                    one_time_key: pk,
+                    commitment: c,
+                    tx_pubkey: [1u8; 32],
+                    view_tag: 0,
+                    payload: Default::default(),
+                    amount: None,
+                    height: now - 10,
+                    coinbase: false,
+                },
+            );
+            crate::MembershipLeafDigest::<Test>::insert(i, membership::empty_leaf_hash());
+        }
+        crate::NextOutputIndex::<Test>::put(n);
+        crate::TreeSlots::<Test>::put(n);
+
+        let (a1, g1) = RingCt::maintain_membership_tree();
+        assert_eq!(g1, 0);
+        assert_eq!(a1, 64);
+        let admitted: u64 = (0..n).filter(|i| RingCt::is_admitted(*i)).count() as u64;
+        assert_eq!(admitted, 64);
+
+        // Steady-state mint of 3 more outputs still grows tree (not starved).
+        for j in 0..3u64 {
+            let idx = n + j;
+            crate::Outputs::<Test>::insert(
+                idx,
+                StoredOutput {
+                    one_time_key: crypto::random_secret_key().1,
+                    commitment: crypto::commit(1, &crypto::random_blinding()).unwrap(),
+                    tx_pubkey: [1u8; 32],
+                    view_tag: 0,
+                    payload: Default::default(),
+                    amount: None,
+                    height: now,
+                    coinbase: false,
+                },
+            );
+            RingCt::maybe_grow_empty_on_create(idx);
+        }
+        crate::NextOutputIndex::<Test>::put(n + 3);
+        assert_eq!(RingCt::tree_slots(), n + 3);
+
+        let (a2, _) = RingCt::maintain_membership_tree();
+        assert_eq!(a2, 16); // remaining fills from the original 80
+        assert_eq!((0..n).filter(|i| RingCt::is_admitted(*i)).count(), 80);
+    });
+}
+
+#[test]
+fn membership_transfer_grows_slots_for_new_outputs() {
+    new_test_ext().execute_with(|| {
+        let (bed, tx) = bed_and_spend(0);
+        let slots_before = RingCt::tree_slots();
+        assert_ok!(RingCt::transfer(authorized(), tx));
+        assert_eq!(RingCt::tree_slots(), slots_before + 2);
+        assert_eq!(RingCt::tree_slots(), crate::NextOutputIndex::<Test>::get());
+        drop(bed);
+    });
+}
+
+// ---- PR-2 lag catch-up / AdmitScanCursor --------------------------------
+
+/// Plant `n` outputs with no tree slots (simulate mid-dev tree enable).
+fn plant_outputs_without_tree(n: u64, height: u64, coinbase: bool) {
+    System::set_block_number(height);
+    for i in 0..n {
+        let pk = crypto::random_secret_key().1;
+        let c = if coinbase {
+            crypto::value_commitment(i + 1)
+        } else {
+            crypto::commit(i + 1, &crypto::random_blinding()).unwrap()
+        };
+        crate::Outputs::<Test>::insert(
+            i,
+            StoredOutput {
+                one_time_key: pk,
+                commitment: c,
+                tx_pubkey: [2u8; 32],
+                view_tag: 0,
+                payload: Default::default(),
+                amount: if coinbase { Some(i + 1) } else { None },
+                height,
+                coinbase,
+            },
+        );
+    }
+    crate::NextOutputIndex::<Test>::put(n);
+    crate::TreeSlots::<Test>::put(0);
+    crate::AdmitScanCursor::<Test>::kill();
+}
+
+#[test]
+fn membership_multiblock_catchup_reaches_tip() {
+    new_test_ext().execute_with(|| {
+        let n = 200u64;
+        plant_outputs_without_tree(n, 1, false);
+        assert!(RingCt::is_membership_lagging());
+        assert!(!RingCt::is_membership_slot_caught_up());
+
+        let mut total_grown = 0u32;
+        // 200 / 64 = 4 blocks of catch-up (ceil).
+        for _ in 0..4 {
+            let (_a, g) = RingCt::maintain_membership_tree();
+            total_grown += g;
+            assert!(g <= ringct_primitives::FCMP_GROW_CATCHUP_MAX_PER_BLOCK);
+        }
+        assert_eq!(total_grown as u64, n);
+        assert_eq!(RingCt::tree_slots(), n);
+        assert!(!RingCt::is_membership_lagging());
+        assert!(RingCt::is_membership_slot_caught_up());
+
+        let st = RingCt::membership_backfill_status();
+        assert_eq!(st.tree_slots, n);
+        assert_eq!(st.next_output_index, n);
+        assert!(!st.lagging);
+    });
+}
+
+#[test]
+fn membership_fill_before_catchup_grow_same_block() {
+    new_test_ext().execute_with(|| {
+        // 10 mature EMPTY slots (need fill) + lag of 50 unplanted tree slots.
+        let mature_slots = 10u64;
+        let tip = 60u64;
+        let now = 50u64;
+        System::set_block_number(now);
+
+        for i in 0..tip {
+            let pk = crypto::random_secret_key().1;
+            let c = crypto::commit(i + 1, &crypto::random_blinding()).unwrap();
+            crate::Outputs::<Test>::insert(
+                i,
+                StoredOutput {
+                    one_time_key: pk,
+                    commitment: c,
+                    tx_pubkey: [3u8; 32],
+                    view_tag: 0,
+                    payload: Default::default(),
+                    amount: None,
+                    // First 10 mature; rest immature (height = now).
+                    height: if i < mature_slots { now - 10 } else { now },
+                    coinbase: false,
+                },
+            );
+        }
+        crate::NextOutputIndex::<Test>::put(tip);
+        // Tree only knows first 10 (EMPTY), lagging for 50.
+        for i in 0..mature_slots {
+            crate::MembershipLeafDigest::<Test>::insert(i, membership::empty_leaf_hash());
+        }
+        crate::TreeSlots::<Test>::put(mature_slots);
+        crate::AdmitScanCursor::<Test>::put(0);
+
+        let (adm, grown) = RingCt::maintain_membership_tree();
+        // Fill first: all 10 mature slots admitted.
+        assert_eq!(adm, 10);
+        // Then catch-up grow up to budget (64) but only 50 lagging.
+        assert_eq!(grown, 50);
+        assert_eq!(RingCt::tree_slots(), tip);
+        assert!(!RingCt::is_membership_lagging());
+        for i in 0..mature_slots {
+            assert!(RingCt::is_admitted(i));
+        }
+        // Newly grown slots still EMPTY (immature) — fill next time they mature.
+        for i in mature_slots..tip {
+            assert!(!RingCt::is_admitted(i));
+        }
+    });
+}
+
+#[test]
+fn membership_admit_cursor_wraps_and_admits_sparse() {
+    new_test_ext().execute_with(|| {
+        let now = 100u64;
+        System::set_block_number(now);
+        // slot 0 immature coinbase; slots 1..5 mature transfers; cursor starts at 0
+        for i in 0..6u64 {
+            let coinbase = i == 0;
+            crate::Outputs::<Test>::insert(
+                i,
+                StoredOutput {
+                    one_time_key: crypto::random_secret_key().1,
+                    commitment: if coinbase {
+                        crypto::value_commitment(1)
+                    } else {
+                        crypto::commit(i, &crypto::random_blinding()).unwrap()
+                    },
+                    tx_pubkey: [4u8; 32],
+                    view_tag: 0,
+                    payload: Default::default(),
+                    amount: if coinbase { Some(1) } else { None },
+                    height: if coinbase { now } else { now - 10 },
+                    coinbase,
+                },
+            );
+            crate::MembershipLeafDigest::<Test>::insert(i, membership::empty_leaf_hash());
+        }
+        crate::NextOutputIndex::<Test>::put(6);
+        crate::TreeSlots::<Test>::put(6);
+        crate::AdmitScanCursor::<Test>::put(0);
+
+        let (adm, g) = RingCt::maintain_membership_tree();
+        assert_eq!(g, 0);
+        assert_eq!(adm, 5);
+        assert!(!RingCt::is_admitted(0));
+        for i in 1..6 {
+            assert!(RingCt::is_admitted(i));
+        }
+        // Cursor advanced through a full pass.
+        assert!(RingCt::admit_scan_cursor() < 6);
+    });
+}
+
+#[test]
+fn membership_event_reports_lag_fields() {
+    new_test_ext().execute_with(|| {
+        plant_outputs_without_tree(100, 1, false);
+        // One finalize via run_to_block step.
+        run_to_block(2);
+        let st = RingCt::membership_backfill_status();
+        // After one catch-up block: 64 grown, still lagging.
+        assert_eq!(st.tree_slots, 64);
+        assert!(st.lagging);
+        System::assert_has_event(
+            Event::MembershipTreeUpdated {
+                tree_slots: 64,
+                next_output_index: 100,
+                root: RingCt::membership_root(),
+                admitted_this_block: 0, // immature at height 1
+                catchup_grown: 64,
+                lagging: true,
+                admit_scan_cursor: RingCt::admit_scan_cursor(),
+            }
+            .into(),
+        );
+    });
+}
+
+#[test]
+fn membership_steady_state_not_lagging_after_mint() {
+    new_test_ext().execute_with(|| {
+        let _ = mint_ring_bed(RING);
+        assert!(!RingCt::is_membership_lagging());
+        let st = RingCt::membership_backfill_status();
+        assert_eq!(st.tree_slots, st.next_output_index);
+        assert!(!st.lagging);
+    });
+}
+
+// ---- PR-6 weight budgets ------------------------------------------------
+
+#[test]
+fn fcmp_weights_scale_and_dominate_clsag_at_full_set() {
+    use crate::weights::WeightInfo;
+    use frame_support::weights::Weight;
+
+    let clsag_1 = <() as WeightInfo>::transfer(1, 2, 16);
+    let fcmp_small = <() as WeightInfo>::transfer_fcmp(1, 2, 16);
+    let fcmp_full = <() as WeightInfo>::transfer_fcmp(1, 2, 64);
+    let fcmp_4in = <() as WeightInfo>::transfer_fcmp(4, 2, 64);
+
+    // Full-set interim is at least as heavy as CLSAG-16 (25 ms budget @ 64).
+    assert!(fcmp_full.ref_time() >= clsag_1.ref_time());
+    assert!(fcmp_full.ref_time() >= fcmp_small.ref_time());
+    assert!(fcmp_4in.ref_time() >= fcmp_full.ref_time());
+
+    // Maintain worst-case is bounded and non-zero.
+    let m = <() as WeightInfo>::maintain_membership(64, 64, 64);
+    assert!(m.ref_time() > 0);
+    assert!(m != Weight::zero());
+
+    // Authorize FCMP includes root-window reads.
+    let a = <() as WeightInfo>::authorize_fcmp(2);
+    assert!(a.ref_time() > 0);
+}
+
+#[test]
+fn engineered_weights_cover_machine_benchmarks() {
+    use crate::weights::WeightInfo;
+    // From weights_machine.rs (2026-07-09).
+    assert!(<() as WeightInfo>::transfer(1, 1, 16).ref_time() >= 6_185_000_000);
+    assert!(<() as WeightInfo>::coinbase(1).ref_time() >= 92_000_000);
+    assert!(<() as WeightInfo>::authorize_transfer(1).ref_time() >= 8_000_000);
+}
+
+// ---- PR-3 runtime-facing pallet helpers --------------------------------
+
+#[test]
+fn membership_api_helpers_match_storage() {
+    use codec::Decode;
+    new_test_ext().execute_with(|| {
+        let bed = mint_ring_bed(RING);
+        run_to_block(62);
+
+        assert_eq!(RingCt::fcmp_mode(), crate::FCMP_MODE_BUILDING);
+        assert_eq!(RingCt::tree_slots(), RING as u64);
+        assert_eq!(
+            RingCt::membership_root(),
+            RingCt::membership_backfill_status().membership_root
+        );
+
+        for o in &bed {
+            assert!(RingCt::is_admitted(o.index));
+            let d = RingCt::membership_leaf_digest(o.index).expect("digest");
+            let stored = crate::Outputs::<Test>::get(o.index).unwrap();
+            assert_eq!(
+                d,
+                membership::leaf_hash(&stored.one_time_key, &stored.commitment)
+            );
+        }
+
+        // Frontier is SCALE Vec of digests for 0..TreeSlots.
+        let raw = RingCt::membership_frontier();
+        let digests: Vec<[u8; 32]> = Decode::decode(&mut &raw[..]).expect("frontier SCALE");
+        assert_eq!(digests.len(), RING);
+        assert_eq!(
+            membership::root_from_leaves(&digests),
+            RingCt::membership_root()
+        );
+
+        // Root retained at a finalized block.
+        let at = System::block_number() - 1;
+        assert_eq!(
+            RingCt::membership_root_at(at),
+            Some(RingCt::membership_root())
+        );
+    });
+}

@@ -37,10 +37,14 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
     ext
 }
 
-/// Advance to `n`, running this pallet's `on_initialize` (resets the
-/// per-block coinbase flag) — enough for these tests, no full block cycle.
+/// Advance to `n`, running `on_finalize` / `on_initialize` so membership
+/// tree maintenance (PR-1) executes between blocks.
 pub fn run_to_block(n: u64) {
     use frame_support::traits::Hooks;
-    System::set_block_number(n);
-    RingCt::on_initialize(n);
+    while System::block_number() < n {
+        let b = System::block_number();
+        RingCt::on_finalize(b);
+        System::set_block_number(b + 1);
+        RingCt::on_initialize(b + 1);
+    }
 }

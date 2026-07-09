@@ -28,8 +28,11 @@ use curve25519_dalek::{
 };
 use sha2::{Digest, Sha512};
 
-/// Maximum ring size accepted by the verifier.
+/// Maximum ring size for production CLSAG transfers (`RingSize` ≤ 16).
 pub const MAX_RING: usize = ringct_primitives::MAX_RING_SIZE as usize;
+
+/// Maximum ring size for FCMP interim full-mature-set CLSAG (PR-5).
+pub const MAX_FCMP_RING: usize = ringct_primitives::MAX_FCMP_ANON_SET as usize;
 
 const DOM_AGG_KEY: &[u8] = b"kohl/clsag/agg-key/v1";
 const DOM_AGG_COM: &[u8] = b"kohl/clsag/agg-com/v1";
@@ -63,12 +66,16 @@ fn decompress(bytes: &[u8]) -> Option<RistrettoPoint> {
 }
 
 /// Parse a ring blob into (one-time keys, commitments).
-fn parse_ring(blob: &[u8]) -> Option<(Vec<RistrettoPoint>, Vec<RistrettoPoint>)> {
-    if blob.is_empty() || !blob.len().is_multiple_of(64) || blob.len() / 64 > MAX_RING {
+fn parse_ring(blob: &[u8], max_n: usize) -> Option<(Vec<RistrettoPoint>, Vec<RistrettoPoint>)> {
+    if blob.is_empty() || !blob.len().is_multiple_of(64) {
         return None;
     }
-    let mut keys = Vec::with_capacity(blob.len() / 64);
-    let mut commitments = Vec::with_capacity(blob.len() / 64);
+    let n = blob.len() / 64;
+    if n == 0 || n > max_n {
+        return None;
+    }
+    let mut keys = Vec::with_capacity(n);
+    let mut commitments = Vec::with_capacity(n);
     for pair in blob.chunks_exact(64) {
         keys.push(decompress(&pair[..32])?);
         commitments.push(decompress(&pair[32..])?);
@@ -120,7 +127,28 @@ pub fn sign(
     input_blinding: &[u8; 32],
     pseudo_blinding: &[u8; 32],
 ) -> Option<ClsagResult> {
-    let (keys, commitments) = parse_ring(ring_blob)?;
+    sign_with_max(
+        msg,
+        ring_blob,
+        real_index,
+        secret_key,
+        input_blinding,
+        pseudo_blinding,
+        MAX_RING,
+    )
+}
+
+/// CLSAG sign with an explicit ring-size cap (FCMP interim uses [`MAX_FCMP_RING`]).
+pub fn sign_with_max(
+    msg: &[u8; 32],
+    ring_blob: &[u8],
+    real_index: usize,
+    secret_key: &[u8; 32],
+    input_blinding: &[u8; 32],
+    pseudo_blinding: &[u8; 32],
+    max_n: usize,
+) -> Option<ClsagResult> {
+    let (keys, commitments) = parse_ring(ring_blob, max_n)?;
     let n = keys.len();
     if real_index >= n {
         return None;
@@ -197,10 +225,22 @@ pub fn sign(
 /// Verify a CLSAG. Total-decoding strict: every scalar must be canonical,
 /// every point must decompress, `I` must not be the identity.
 pub fn verify(msg: &[u8], ring_blob: &[u8], pseudo: &[u8], key_image: &[u8], sig: &[u8]) -> bool {
+    verify_with_max(msg, ring_blob, pseudo, key_image, sig, MAX_RING)
+}
+
+/// CLSAG verify with an explicit ring-size cap (FCMP interim uses [`MAX_FCMP_RING`]).
+pub fn verify_with_max(
+    msg: &[u8],
+    ring_blob: &[u8],
+    pseudo: &[u8],
+    key_image: &[u8],
+    sig: &[u8],
+    max_n: usize,
+) -> bool {
     if msg.len() != 32 || pseudo.len() != 32 || key_image.len() != 32 {
         return false;
     }
-    let Some((keys, commitments)) = parse_ring(ring_blob) else {
+    let Some((keys, commitments)) = parse_ring(ring_blob, max_n) else {
         return false;
     };
     let n = keys.len();

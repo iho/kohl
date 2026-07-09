@@ -7,7 +7,7 @@ authors.workspace = true
 repository.workspace = true
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(substrate_runtime)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(substrate_runtime)", "cfg(feature, values(\"fcmp-spike\"))"] }
 
 [dependencies]
 sp-runtime-interface = { workspace = true }
@@ -29,6 +29,11 @@ criterion = { version = "0.5", features = ["html_reports"] }
 name = "crypto"
 harness = false
 
+[[bench]]
+name = "fcmp_spike"
+harness = false
+required-features = ["fcmp-spike"]
+
 [features]
 default = ["std"]
 std = [
@@ -44,3 +49,5 @@ std = [
     "dep:rand",
     "dep:sha2",
 ]
+# PR-0 research spike: Path A Merkle + Path B embedding notes. Not consensus.
+fcmp-spike = ["std"]

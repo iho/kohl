@@ -128,6 +128,15 @@ The node exposes convenience methods (in addition to `state_call`):
 | `ringct_minFeePerByte` | fee floor |
 | `ringct_isKeyImageSpent` | hex key image → bool |
 | `ringct_outputsInRange` | block range → SCALE hex of outputs |
+| `ringct_membershipRoot` | current FCMP membership Merkle root (hex) |
+| `ringct_membershipRootAt` | historical root at block (if retained) |
+| `ringct_treeSlots` | grown membership tree slots |
+| `ringct_isAdmitted` | whether output index leaf is `L(P,C)` |
+| `ringct_membershipLeafDigest` | leaf digest at index (hex) |
+| `ringct_membershipFrontier` | SCALE digests `0..treeSlots` (hex) |
+| `ringct_fcmpMode` | `1` Building (CLSAG+tree), `2` FcmpOnly |
+| `ringct_admitScanCursor` | fill scan cursor |
+| `ringct_membershipBackfillStatus` | lag / catch-up JSON snapshot |
 
 `kohl-wallet` prefers these and falls back to `state_call` for older nodes.
 

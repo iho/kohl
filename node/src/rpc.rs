@@ -68,6 +68,57 @@ pub trait RingCtRpcApi {
     /// SCALE of `Vec<(u64, StoredOutput)>` (same encoding as the runtime API).
     #[method(name = "ringct_outputsInRange")]
     fn outputs_in_range(&self, from: u32, to: u32) -> Result<String, ErrorObjectOwned>;
+
+    /// Current membership Merkle root (32-byte hex).
+    #[method(name = "ringct_membershipRoot")]
+    fn membership_root(&self) -> Result<String, ErrorObjectOwned>;
+
+    /// Historical membership root at block end (32-byte hex), if retained.
+    #[method(name = "ringct_membershipRootAt")]
+    fn membership_root_at(&self, block: u32) -> Result<Option<String>, ErrorObjectOwned>;
+
+    /// Number of grown membership tree slots.
+    #[method(name = "ringct_treeSlots")]
+    fn tree_slots(&self) -> Result<u64, ErrorObjectOwned>;
+
+    /// Whether global output index has been admitted (`L(P,C)` leaf).
+    #[method(name = "ringct_isAdmitted")]
+    fn is_admitted(&self, index: u64) -> Result<bool, ErrorObjectOwned>;
+
+    /// Leaf digest at index (32-byte hex), if the slot exists.
+    #[method(name = "ringct_membershipLeafDigest")]
+    fn membership_leaf_digest(&self, index: u64) -> Result<Option<String>, ErrorObjectOwned>;
+
+    /// SCALE `Vec<[u8;32]>` of leaf digests `0..treeSlots` as 0x-hex.
+    #[method(name = "ringct_membershipFrontier")]
+    fn membership_frontier(&self) -> Result<String, ErrorObjectOwned>;
+
+    /// Spend-path mode: `1` Building (CLSAG+tree), `2` FcmpOnly.
+    #[method(name = "ringct_fcmpMode")]
+    fn fcmp_mode(&self) -> Result<u8, ErrorObjectOwned>;
+
+    /// Admit scan cursor (round-robin fill position).
+    #[method(name = "ringct_admitScanCursor")]
+    fn admit_scan_cursor(&self) -> Result<u64, ErrorObjectOwned>;
+
+    /// Lag / catch-up status as JSON-friendly object.
+    #[method(name = "ringct_membershipBackfillStatus")]
+    fn membership_backfill_status(&self) -> Result<MembershipBackfillRpc, ErrorObjectOwned>;
+}
+
+/// JSON view of [`pallet_ringct::MembershipBackfillStatus`].
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct MembershipBackfillRpc {
+    /// Grown tree slots.
+    pub tree_slots: u64,
+    /// Next output index (tip).
+    pub next_output_index: u64,
+    /// True while `tree_slots < next_output_index`.
+    pub lagging: bool,
+    /// Round-robin admit cursor.
+    pub admit_scan_cursor: u64,
+    /// Current root as 0x-hex.
+    pub membership_root: String,
 }
 
 /// RPC implementation backed by the runtime API at the best block.
@@ -98,6 +149,10 @@ fn parse_ki(hex_str: &str) -> Result<[u8; 32], ErrorObjectOwned> {
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Ok(out)
+}
+
+fn hex32(bytes: &[u8; 32]) -> String {
+    format!("0x{}", hex::encode(bytes))
 }
 
 #[async_trait]
@@ -140,5 +195,93 @@ where
             .outputs_in_range(at, from, to)
             .map_err(|e| rpc_err(format!("runtime API: {e}")))?;
         Ok(format!("0x{}", hex::encode(outs.encode())))
+    }
+
+    fn membership_root(&self) -> Result<String, ErrorObjectOwned> {
+        let at = self.client.info().best_hash;
+        let root = self
+            .client
+            .runtime_api()
+            .membership_root(at)
+            .map_err(|e| rpc_err(format!("runtime API: {e}")))?;
+        Ok(hex32(&root))
+    }
+
+    fn membership_root_at(&self, block: u32) -> Result<Option<String>, ErrorObjectOwned> {
+        let at = self.client.info().best_hash;
+        let root = self
+            .client
+            .runtime_api()
+            .membership_root_at(at, block)
+            .map_err(|e| rpc_err(format!("runtime API: {e}")))?;
+        Ok(root.map(|r| hex32(&r)))
+    }
+
+    fn tree_slots(&self) -> Result<u64, ErrorObjectOwned> {
+        let at = self.client.info().best_hash;
+        self.client
+            .runtime_api()
+            .tree_slots(at)
+            .map_err(|e| rpc_err(format!("runtime API: {e}")))
+    }
+
+    fn is_admitted(&self, index: u64) -> Result<bool, ErrorObjectOwned> {
+        let at = self.client.info().best_hash;
+        self.client
+            .runtime_api()
+            .is_admitted(at, index)
+            .map_err(|e| rpc_err(format!("runtime API: {e}")))
+    }
+
+    fn membership_leaf_digest(&self, index: u64) -> Result<Option<String>, ErrorObjectOwned> {
+        let at = self.client.info().best_hash;
+        let d = self
+            .client
+            .runtime_api()
+            .membership_leaf_digest(at, index)
+            .map_err(|e| rpc_err(format!("runtime API: {e}")))?;
+        Ok(d.map(|x| hex32(&x)))
+    }
+
+    fn membership_frontier(&self) -> Result<String, ErrorObjectOwned> {
+        let at = self.client.info().best_hash;
+        let raw = self
+            .client
+            .runtime_api()
+            .membership_frontier(at)
+            .map_err(|e| rpc_err(format!("runtime API: {e}")))?;
+        Ok(format!("0x{}", hex::encode(raw)))
+    }
+
+    fn fcmp_mode(&self) -> Result<u8, ErrorObjectOwned> {
+        let at = self.client.info().best_hash;
+        self.client
+            .runtime_api()
+            .fcmp_mode(at)
+            .map_err(|e| rpc_err(format!("runtime API: {e}")))
+    }
+
+    fn admit_scan_cursor(&self) -> Result<u64, ErrorObjectOwned> {
+        let at = self.client.info().best_hash;
+        self.client
+            .runtime_api()
+            .admit_scan_cursor(at)
+            .map_err(|e| rpc_err(format!("runtime API: {e}")))
+    }
+
+    fn membership_backfill_status(&self) -> Result<MembershipBackfillRpc, ErrorObjectOwned> {
+        let at = self.client.info().best_hash;
+        let s = self
+            .client
+            .runtime_api()
+            .membership_backfill_status(at)
+            .map_err(|e| rpc_err(format!("runtime API: {e}")))?;
+        Ok(MembershipBackfillRpc {
+            tree_slots: s.tree_slots,
+            next_output_index: s.next_output_index,
+            lagging: s.lagging,
+            admit_scan_cursor: s.admit_scan_cursor,
+            membership_root: hex32(&s.membership_root),
+        })
     }
 }

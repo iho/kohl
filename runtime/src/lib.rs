@@ -378,6 +378,42 @@ sp_api::impl_runtime_apis! {
         fn min_fee_per_byte() -> u64 {
             <Runtime as pallet_ringct::Config>::MinFeePerByte::get()
         }
+
+        fn membership_root() -> [u8; 32] {
+            pallet_ringct::Pallet::<Runtime>::membership_root()
+        }
+
+        fn membership_root_at(block: BlockNumber) -> Option<[u8; 32]> {
+            pallet_ringct::Pallet::<Runtime>::membership_root_at(block)
+        }
+
+        fn tree_slots() -> u64 {
+            pallet_ringct::Pallet::<Runtime>::tree_slots()
+        }
+
+        fn is_admitted(index: u64) -> bool {
+            pallet_ringct::Pallet::<Runtime>::is_admitted(index)
+        }
+
+        fn membership_leaf_digest(index: u64) -> Option<[u8; 32]> {
+            pallet_ringct::Pallet::<Runtime>::membership_leaf_digest(index)
+        }
+
+        fn membership_frontier() -> Vec<u8> {
+            pallet_ringct::Pallet::<Runtime>::membership_frontier()
+        }
+
+        fn fcmp_mode() -> u8 {
+            pallet_ringct::Pallet::<Runtime>::fcmp_mode()
+        }
+
+        fn admit_scan_cursor() -> u64 {
+            pallet_ringct::Pallet::<Runtime>::admit_scan_cursor()
+        }
+
+        fn membership_backfill_status() -> pallet_ringct::MembershipBackfillStatus {
+            pallet_ringct::Pallet::<Runtime>::membership_backfill_status()
+        }
     }
 
     #[cfg(feature = "runtime-benchmarks")]
