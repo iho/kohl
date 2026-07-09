@@ -1,0 +1,53 @@
+[package]
+name = "kohl-node"
+description = "The kohl chain node: RandomX PoW private-cash L1"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "kohl"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+futures = { workspace = true }
+jsonrpsee = { workspace = true }
+codec = { workspace = true, features = ["std"] }
+
+sc-cli = { workspace = true }
+sc-service = { workspace = true }
+sc-executor = { workspace = true }
+sc-network = { workspace = true }
+sc-consensus = { workspace = true }
+sc-consensus-pow = { workspace = true }
+sc-client-api = { workspace = true }
+sc-transaction-pool = { workspace = true }
+sc-transaction-pool-api = { workspace = true }
+sc-basic-authorship = { workspace = true }
+sc-offchain = { workspace = true }
+sc-telemetry = { workspace = true }
+
+sp-api = { workspace = true, features = ["std"] }
+sp-block-builder = { workspace = true, features = ["std"] }
+sp-blockchain = { workspace = true }
+sp-consensus-pow = { workspace = true, features = ["std"] }
+sp-core = { workspace = true, features = ["std"] }
+sp-inherents = { workspace = true, features = ["std"] }
+sp-io = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+sp-timestamp = { workspace = true }
+
+substrate-frame-rpc-system = { workspace = true }
+frame-system = { workspace = true, features = ["std"] }
+
+kohl-runtime = { workspace = true, features = ["std"] }
+kohl-runtime-api = { workspace = true, features = ["std"] }
+kohl-pow = { workspace = true, features = ["node"] }
+ringct-crypto = { workspace = true, features = ["std"] }
+
+[features]
+default = []
+# Use RandomX for mining/verification instead of the BLAKE2b dev fallback.
+randomx = ["kohl-pow/randomx"]

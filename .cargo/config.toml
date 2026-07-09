@@ -1,0 +1,6 @@
+# The kohl runtime's WASM build needs the wasm host-function symbols left as
+# imports rather than resolved at link time. `substrate-wasm-builder` appends
+# WASM_BUILD_RUSTFLAGS to the wasm build; `--allow-undefined` tells rust-lld
+# to treat the sp_io / ringct_crypto host functions as wasm imports.
+[env]
+WASM_BUILD_RUSTFLAGS = "-Clink-arg=--allow-undefined"

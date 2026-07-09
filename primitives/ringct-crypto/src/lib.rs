@@ -34,6 +34,11 @@ pub mod clsag;
 #[cfg(feature = "std")]
 pub mod stealth;
 
+/// The set of host functions to register in the node executor so the WASM
+/// runtime can call the native RingCT verifiers (BLUEPRINT.md §1.6).
+#[cfg(feature = "std")]
+pub use crate::ringct_crypto::HostFunctions as RingCtHostFunctions;
+
 /// Bit width of every range proof: amounts are proven to lie in [0, 2^64).
 pub const RANGE_PROOF_BITS: usize = 64;
 

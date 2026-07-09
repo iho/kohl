@@ -23,13 +23,21 @@ This repository implements the blueprint through Phase 4 (all crates compile aga
 | `pallets/ringct` | the monetary system (outputs, key images, RingCT transfers, coinbase) | ✅ tested |
 | `pallets/difficulty` | LWMA PoW difficulty | ✅ tested |
 | `consensus/kohl-pow` | mining core + `sc-consensus-pow` `PowAlgorithm` (RandomX) | ✅ core tested; `node`/`randomx` feature-gated |
-| `runtime` | `#[frame_support::runtime]` wiring, genesis, runtime APIs | ✅ builds native |
+| `runtime` | `#[frame_support::runtime]` wiring, genesis, runtime APIs | ✅ builds native + WASM |
+| `node` | `sc-service` PoW node: import queue, mining worker, CPU miner, host-function-extended executor | ✅ builds; runnable dev chain |
 
-The privacy cryptography and the full transfer/consensus logic are implemented and tested.
-**Remaining work**: the node-service binary (`sc-service` assembly, miner, chain spec CLI),
-`frame-benchmarking` weights, epoch-rotating RandomX seed, and the migration off the
-deprecated `ValidateUnsigned` to `#[pallet::authorize]`. The WASM runtime is built native
-here only because the `wasm32` target is not installed in this environment (`SKIP_WASM_BUILD`).
+The privacy cryptography, the full transfer/consensus logic, and a runnable PoW node are
+implemented. Build the node with `cargo build -p kohl-node --release` and run a single-node
+dev chain that produces blocks with `./target/release/kohl --dev --validator --tmp`.
+
+The WASM runtime build needs `--allow-undefined` passed to the wasm linker (so the `sp_io`
+and `ringct_crypto` host functions stay as imports); this is wired in `.cargo/config.toml`
+via `WASM_BUILD_RUSTFLAGS`.
+
+**Remaining work**: `frame-benchmarking` weights (current weights are conservative
+placeholders), an epoch-rotating RandomX seed and coinbase inherent so mining actually
+mints rewards (the dev miner currently produces empty blocks), P2P privacy (Tor/Dandelion++),
+and the migration off the deprecated `ValidateUnsigned` to `#[pallet::authorize]`.
 
 ---
 
