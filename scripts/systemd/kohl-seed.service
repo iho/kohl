@@ -1,0 +1,51 @@
+# Kohl mainnet public seed / bootnode
+#
+# Install:
+#   sudo useradd --system --home /var/lib/kohl --shell /usr/sbin/nologin kohl
+#   sudo mkdir -p /var/lib/kohl /etc/kohl
+#   sudo cp target/release/kohl /usr/local/bin/kohl
+#   sudo cp scripts/systemd/kohl-seed.service /etc/systemd/system/
+#   sudo cp scripts/systemd/kohl-seed.env.example /etc/kohl/seed.env
+#   # edit /etc/kohl/seed.env — PUBLIC_ADDR, PEER settings, mining seed
+#   sudo chmod 600 /etc/kohl/seed.env
+#   sudo chown -R kohl:kohl /var/lib/kohl
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now kohl-seed
+#
+# Logs: journalctl -u kohl-seed -f
+
+[Unit]
+Description=Kohl mainnet seed (P2P bootnode)
+Documentation=https://github.com/iho/kohl/blob/main/docs/production-bootnode.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kohl
+Group=kohl
+EnvironmentFile=/etc/kohl/seed.env
+ExecStart=/usr/local/bin/kohl \
+  --chain ${CHAIN} \
+  --base-path /var/lib/kohl/chain \
+  --node-key-file /var/lib/kohl/node-key \
+  --name ${NODE_NAME} \
+  --validator \
+  --mining-seed ${MINING_SEED} \
+  --listen-addr ${LISTEN_ADDR} \
+  --public-addr ${PUBLIC_ADDR} \
+  --rpc-port ${RPC_PORT} \
+  --rpc-cors localhost \
+  --prometheus-port ${PROMETHEUS_PORT}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+# Harden a bit (optional; comment out if they break your setup)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/kohl
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

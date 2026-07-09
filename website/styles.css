@@ -790,6 +790,202 @@ body {
   }
 }
 
+/* Doc / runbook pages */
+
+.doc {
+  padding: 3rem 0 4rem;
+}
+
+.doc-hero {
+  max-width: 40rem;
+  margin-bottom: 2rem;
+}
+
+.doc-hero h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(2.4rem, 5vw, 3.4rem);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.doc-meta {
+  margin: 1rem 0 0;
+  color: var(--faint);
+  font-size: 0.92rem;
+}
+
+.doc-meta a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.doc-meta a:hover {
+  border-bottom: 1px solid rgba(232, 195, 154, 0.45);
+}
+
+.doc-body section {
+  margin: 2.75rem 0;
+  max-width: 46rem;
+}
+
+.doc-body h2 {
+  margin: 0 0 0.85rem;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 1.85rem;
+  letter-spacing: -0.01em;
+}
+
+.doc-body h3 {
+  margin: 1.4rem 0 0.55rem;
+  font-size: 1.05rem;
+}
+
+.doc-body p {
+  margin: 0.65rem 0;
+  color: var(--muted);
+}
+
+.doc-body .note {
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(232, 195, 154, 0.05);
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.toc {
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+  max-width: 22rem;
+  margin-bottom: 2rem;
+}
+
+.toc strong {
+  display: block;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 0.55rem;
+}
+
+.toc ol {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--muted);
+}
+
+.toc a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.toc a:hover {
+  border-bottom: 1px solid rgba(232, 195, 154, 0.4);
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin: 1rem 0;
+}
+
+.doc-body table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.doc-body th,
+.doc-body td {
+  text-align: left;
+  padding: 0.75rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.doc-body th {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.doc-body td {
+  color: var(--muted);
+}
+
+.doc-body tr:last-child td {
+  border-bottom: none;
+}
+
+.bullets,
+.checklist-page {
+  margin: 0.75rem 0;
+  padding-left: 1.2rem;
+  color: var(--muted);
+}
+
+.bullets li,
+.checklist-page li {
+  margin: 0.4rem 0;
+}
+
+.checklist-page {
+  list-style: none;
+  padding-left: 0;
+}
+
+.checklist-page li {
+  position: relative;
+  padding: 0.55rem 0.55rem 0.55rem 1.85rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin: 0.45rem 0;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.checklist-page li::before {
+  content: "";
+  position: absolute;
+  left: 0.75rem;
+  top: 0.85rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 2px;
+  background: var(--ok);
+}
+
+.doc-foot {
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.doc-body .code-block {
+  margin: 1rem 0;
+}
+
+.doc-body code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  color: var(--accent);
+}
+
+.doc-body pre code {
+  color: #d9cfc2;
+  font-size: 0.82rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

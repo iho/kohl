@@ -49,7 +49,8 @@ A single-node dev chain can mine and mint coinbase outputs.
 | `ringct_*` JSON-RPC for wallets | Done |
 | Criterion crypto benches | Done (`cargo bench -p ringct-crypto`) |
 | frame-benchmarking scaffold | Done (`--features runtime-benchmarks`) |
-| Network privacy guidance (Tor) | Documented; Dandelion++ still planned |
+| Network privacy guidance (Tor) | Documented |
+| Dandelion++ tx diffusion | Done (stem protocol + stem-gated gossip) |
 
 See [BLUEPRINT.md](BLUEPRINT.md) for architecture, verification rules (§3.4),
 tokenomics, and the full remaining-work list.
@@ -191,21 +192,44 @@ cargo install cargo-deny && cargo deny check
 
 ### Network privacy (recommended)
 
-PoW and RingCT hide on-chain linkage; **IP-level metadata still leaks** who
-submitted a transaction. Until Dandelion++ is integrated:
+PoW and RingCT hide on-chain linkage; **IP-level metadata** can still leak who
+submitted a transaction. Kohl enables **Dandelion++** by default:
 
-1. Run the node over **Tor** (or I2P) onion services for P2P and RPC.
-2. Prefer a remote full node you control rather than a third-party public RPC.
-3. Do not reuse the same network identity across unrelated wallets.
+1. **Stem phase** — a local transfer is forwarded along a single random path
+   (`/kohl/dandelion/1` notification protocol). Intermediate hops look like the origin.
+2. **Fluff phase** — with ~10% probability per hop (or on embargo timeout) the
+   transaction is released into ordinary Substrate gossip.
 
-Example (Tor SOCKS for outbound peers — adapt to your setup):
+Still run **Tor** (or I2P) for defence in depth. There is **no** `--proxy-server`
+flag on current builds — use `torsocks` and/or a Tor onion service.
+
+**Full runbook:** **[docs/tor-runbook.md](docs/tor-runbook.md)** (outbound-only, full onion P2P/RPC, wallet over Tor, checklist).
+
+Quick outbound-only sketch:
 
 ```bash
-# After configuring Tor to expose a SOCKS port and optionally an onion service:
-./target/release/kohl --dev --validator --tmp \
-  --proxy-server 127.0.0.1:9050 \
+# Tor daemon with SocksPort 9050; bind P2P to localhost
+torsocks ./target/release/kohl \
+  --chain kohl-ash --validator \
+  --listen-addr /ip4/127.0.0.1/tcp/30333 \
+  --rpc-port 9944 \
+  --network-backend libp2p \
   --mining-seed <64-hex>
 ```
+
+Quick onion sketch (after `HiddenServicePort 30333 127.0.0.1:30333`):
+
+```bash
+ONION=$(sudo cat /var/lib/tor/kohl-p2p/hostname | tr -d '\n' | sed 's/\.onion$//')
+./target/release/kohl \
+  --chain kohl-ash --validator \
+  --listen-addr /ip4/127.0.0.1/tcp/30333 \
+  --public-addr "/onion3/${ONION}:30333" \
+  --network-backend libp2p \
+  --mining-seed <64-hex>
+```
+
+Implementation: `node/src/dandelion/` (engine + stem gate + protocol handler).
 
 ### Fuzzing (Phase 5)
 
@@ -258,6 +282,10 @@ Details: [BLUEPRINT.md §3.4](BLUEPRINT.md) and `pallets/ringct/src/lib.rs`
 |-----|----------|
 | [BLUEPRINT.md](BLUEPRINT.md) | Architecture, pallet design, phases, risks, tokenomics |
 | [GLOSSARY.md](GLOSSARY.md) | Terms & acronyms with explanations and examples |
+| [docs/tor-runbook.md](docs/tor-runbook.md) | Run Kohl over Tor (outbound, onion, wallet RPC) |
+| [docs/production-bootnode.md](docs/production-bootnode.md) | Public seed / bootnode so miners can connect |
+| [scripts/systemd/](scripts/systemd/) | systemd units for seed & miner |
+| [chainspecs/](chainspecs/) | Exported chain specs with bootnodes |
 | [examples/learn_ringct.py](examples/learn_ringct.py) | Runnable privacy walkthrough |
 | [plan.md](plan.md) | Original design brief (historical requirements) |
 

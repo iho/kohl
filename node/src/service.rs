@@ -1,21 +1,29 @@
 //! Full-node service assembly for the kohl PoW chain.
 //!
-//! Differs from a stock Aura/GRANDPA node in three ways:
+//! Differs from a stock Aura/GRANDPA node in four ways:
 //! * the executor is extended with the RingCT verification host functions
 //!   ([`HostFunctions`]) so the WASM runtime can call them natively;
 //! * block import + import queue are `sc-consensus-pow` with our [`KohlPow`]
 //!   algorithm (epoch-rotating seed from lagged block hashes);
 //! * a CPU mining loop drives `start_mining_worker` (BLAKE2b fallback by
-//!   default; RandomX under the `randomx` feature).
+//!   default; RandomX under the `randomx` feature);
+//! * Dandelion++ stem-phase gossip hides the origin IP of transfers before
+//!   ordinary transaction flood (see [`crate::dandelion`]).
 
 use std::{sync::Arc, time::Duration};
 
 use futures::FutureExt;
 use kohl_pow::{algorithm::seed_for_parent, mining::BlakeHasher, Hasher, KohlPow};
 use kohl_runtime::{opaque::Block, RuntimeApi};
+use parking_lot::RwLock;
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 use sc_telemetry::{Telemetry, TelemetryWorker};
 use sp_runtime::traits::Block as BlockT;
+
+use crate::dandelion::{
+    self, DandelionConfig, DandelionEngine, SharedEngine, StemGate,
+};
+use sp_blockchain::HeaderBackend;
 
 #[cfg(feature = "randomx")]
 use kohl_pow::RandomXHasher;
@@ -58,13 +66,17 @@ type FullBackend = sc_service::TFullBackend<Block>;
 type FullSelectChain = sc_consensus::LongestChain<FullBackend, Block>;
 type BoxBlockImport = sc_consensus::BoxBlockImport<Block>;
 
+/// Pool type used by the node: stock Substrate pool gated by Dandelion++ stem state.
+pub type FullPool =
+    StemGate<sc_transaction_pool::TransactionPoolHandle<Block, FullClient>>;
+
 pub type Service = sc_service::PartialComponents<
     FullClient,
     FullBackend,
     FullSelectChain,
     sc_consensus::DefaultImportQueue<Block>,
-    sc_transaction_pool::TransactionPoolHandle<Block, FullClient>,
-    (BoxBlockImport, Option<Telemetry>),
+    FullPool,
+    (BoxBlockImport, Option<Telemetry>, SharedEngine),
 >;
 
 /// Optional 32-byte mining seed: when set, coinbase rewards go to the
@@ -174,7 +186,7 @@ pub fn new_partial(config: &Configuration) -> Result<Service, ServiceError> {
 
     let select_chain = sc_consensus::LongestChain::new(backend.clone());
 
-    let transaction_pool = Arc::from(
+    let inner_pool = Arc::from(
         sc_transaction_pool::Builder::new(
             task_manager.spawn_essential_handle(),
             client.clone(),
@@ -184,6 +196,15 @@ pub fn new_partial(config: &Configuration) -> Result<Service, ServiceError> {
         .with_prometheus(config.prometheus_registry())
         .build(),
     );
+
+    // Dandelion++ engine: local node id is a process-local random label used
+    // only to seed epoch fluff/outbound choices (not a network identity).
+    let local_label = format!("kohl-{}", hex(&rand_label()));
+    let dandelion_engine = Arc::new(RwLock::new(DandelionEngine::new(
+        DandelionConfig::default(),
+        local_label,
+    )));
+    let transaction_pool = Arc::new(StemGate::new(inner_pool, dandelion_engine.clone()));
 
     let algorithm = KohlPow::new(client.clone(), pow_hasher());
 
@@ -212,8 +233,22 @@ pub fn new_partial(config: &Configuration) -> Result<Service, ServiceError> {
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (Box::new(pow_block_import), telemetry),
+        other: (Box::new(pow_block_import), telemetry, dandelion_engine),
     })
+}
+
+fn rand_label() -> [u8; 32] {
+    // Cheap process-local entropy without a new RNG dependency.
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut bytes = [0u8; 32];
+    bytes[..16].copy_from_slice(&t.to_le_bytes());
+    // Mix in the stack address so two nodes started in the same nanosecond differ.
+    let addr = &bytes as *const _ as usize;
+    bytes[16..24].copy_from_slice(&(addr as u64).to_le_bytes());
+    bytes
 }
 
 pub fn new_full<N: sc_network::NetworkBackend<Block, <Block as BlockT>::Hash>>(
@@ -228,15 +263,28 @@ pub fn new_full<N: sc_network::NetworkBackend<Block, <Block as BlockT>::Hash>>(
         keystore_container,
         select_chain,
         transaction_pool,
-        other: (block_import, mut telemetry),
+        other: (block_import, mut telemetry, dandelion_engine),
     } = new_partial(&config)?;
 
-    let net_config = sc_network::config::FullNetworkConfiguration::<
+    let mut net_config = sc_network::config::FullNetworkConfiguration::<
         Block,
         <Block as BlockT>::Hash,
         N,
     >::new(&config.network, config.prometheus_registry().cloned());
     let metrics = N::register_notification_metrics(config.prometheus_registry());
+
+    // Register Dandelion++ stem protocol before the network is built so peers
+    // negotiate the substream alongside the stock transactions protocol.
+    let genesis_hash = client.info().genesis_hash;
+    let (dandelion_cfg, dandelion_notifications) = dandelion::notification_config::<Block, N>(
+        genesis_hash.as_ref(),
+        config.chain_spec.fork_id(),
+        metrics.clone(),
+        net_config.peer_store_handle(),
+    );
+    net_config.add_notification_protocol(dandelion_cfg);
+    let dandelion_protocol_name =
+        dandelion::protocol_name(genesis_hash.as_ref(), config.chain_spec.fork_id());
 
     let (network, system_rpc_tx, tx_handler_controller, sync_service) =
         sc_service::build_network(sc_service::BuildNetworkParams {
@@ -252,6 +300,25 @@ pub fn new_full<N: sc_network::NetworkBackend<Block, <Block as BlockT>::Hash>>(
             block_relay: None,
             metrics,
         })?;
+
+    // Dandelion++ worker: stem relay + embargo-driven fluff (stem bit clear).
+    {
+        let params = dandelion::DandelionParams {
+            engine: dandelion_engine,
+            notifications: dandelion_notifications,
+            protocol_name: dandelion_protocol_name,
+            network: network.clone(),
+            sync: sync_service.clone(),
+            client: client.clone(),
+            pool: transaction_pool.clone(),
+            tick: Duration::from_secs(1),
+        };
+        task_manager.spawn_handle().spawn(
+            "kohl-dandelion",
+            Some("networking"),
+            dandelion::start_dandelion(params),
+        );
+    }
 
     let role = config.role;
     let prometheus_registry = config.prometheus_registry().cloned();

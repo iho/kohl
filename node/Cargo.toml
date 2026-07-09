@@ -13,7 +13,6 @@ path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
 futures = { workspace = true }
-async-trait = "0.1"
 log = "0.4"
 hex = "0.4"
 jsonrpsee = { workspace = true }
@@ -23,6 +22,9 @@ sc-cli = { workspace = true }
 sc-service = { workspace = true }
 sc-executor = { workspace = true }
 sc-network = { workspace = true }
+sc-network-sync = { workspace = true }
+sc-network-transactions = { workspace = true }
+sc-network-types = { workspace = true }
 sc-consensus = { workspace = true }
 sc-consensus-pow = { workspace = true }
 sc-client-api = { workspace = true }
@@ -35,12 +37,18 @@ sc-telemetry = { workspace = true }
 sp-api = { workspace = true, features = ["std"] }
 sp-block-builder = { workspace = true, features = ["std"] }
 sp-blockchain = { workspace = true }
+sp-consensus = { workspace = true }
 sp-consensus-pow = { workspace = true, features = ["std"] }
 sp-core = { workspace = true, features = ["std"] }
 sp-inherents = { workspace = true, features = ["std"] }
 sp-io = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
 sp-timestamp = { workspace = true }
+
+parking_lot = { workspace = true }
+futures-timer = { workspace = true }
+array-bytes = { workspace = true }
+async-trait = "0.1"
 
 substrate-frame-rpc-system = { workspace = true }
 frame-system = { workspace = true, features = ["std"] }

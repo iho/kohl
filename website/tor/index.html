@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Run Kohl over Tor — runbook</title>
+  <meta name="description" content="Operational runbook: run a Kohl node over Tor — outbound-only with torsocks, full onion P2P/RPC, wallet over SOCKS. Complements Dandelion++." />
+  <meta name="theme-color" content="#070707" />
+  <link rel="canonical" href="https://kohl.network/tor/" />
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="https://kohl.network/tor/" />
+  <meta property="og:title" content="Run Kohl over Tor — runbook" />
+  <meta property="og:description" content="Outbound Tor, onion services for P2P/RPC, wallet over SOCKS. Dandelion++ is not enough alone." />
+  <meta property="og:image" content="https://kohl.network/assets/og.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="glow" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="wrap bar">
+      <a class="brand" href="/" aria-label="Kohl home">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M10 7.5v17M10 16.2L21.5 7.5M10 16.2L21.5 24.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>kohl</span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a href="/#privacy">Privacy</a>
+        <a href="/run/">Run</a>
+        <a href="/tor/">Tor</a>
+        <a href="/#status">Status</a>
+        <a href="/#start">Start</a>
+      </nav>
+      <a class="btn btn-ghost" href="https://github.com/iho/kohl/blob/main/docs/tor-runbook.md" rel="noopener noreferrer">Source</a>
+    </div>
+  </header>
+
+  <main id="main" class="doc">
+    <article class="wrap doc-body">
+      <header class="doc-hero">
+        <p class="eyebrow">Runbook</p>
+        <h1>Kohl over Tor</h1>
+        <p class="lede">
+          RingCT hides amounts and parties on chain. Dandelion++ blurs which peer
+          originated a gossip. <strong>Tor</strong> hides your IP from the peer graph.
+          Use both.
+        </p>
+        <p class="doc-meta">
+          No <code>--proxy-server</code> on current builds · prefer
+          <code>torsocks</code> + onion services ·
+          <a href="https://github.com/iho/kohl/blob/main/docs/tor-runbook.md">full markdown in repo</a>
+        </p>
+      </header>
+
+      <nav class="toc" aria-label="On this page">
+        <strong>On this page</strong>
+        <ol>
+          <li><a href="#why">Why Tor still matters</a></li>
+          <li><a href="#levels">Pick a level</a></li>
+          <li><a href="#l1">L1 — Outbound only</a></li>
+          <li><a href="#l2">L2 — Onion P2P</a></li>
+          <li><a href="#l3">L3 — Wallet over Tor</a></li>
+          <li><a href="#check">Checklist</a></li>
+        </ol>
+      </nav>
+
+      <section id="why">
+        <h2>Why Tor still matters</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Layer</th><th>Hides</th><th>Does not hide</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>RingCT</td>
+                <td>Sender, receiver, amount on chain</td>
+                <td>Your IP when you peer or submit</td>
+              </tr>
+              <tr>
+                <td>Dandelion++</td>
+                <td>First-hop origin on the peer graph</td>
+                <td>Clearnet listeners, long-lived peer ID</td>
+              </tr>
+              <tr>
+                <td>Tor</td>
+                <td>Node / wallet IP from peers &amp; observers</td>
+                <td>Bad opsec, hostile remote RPC, malware</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          Honest limits: timing correlation, mixing clearnet and Tor for the same
+          wallet, and open RPC on <code>0.0.0.0</code> all leak. This is hygiene, not a guarantee.
+        </p>
+      </section>
+
+      <section id="levels">
+        <h2>Pick a level</h2>
+        <div class="cards three">
+          <article class="card">
+            <span class="card-num">L1</span>
+            <h3>Outbound only</h3>
+            <p>Dial peers via Tor. No inbound onion. Lowest effort.</p>
+            <p class="card-meta">Tool: <strong>torsocks</strong></p>
+          </article>
+          <article class="card">
+            <span class="card-num">L2</span>
+            <h3>Full onion node</h3>
+            <p>Hidden service for P2P (and optional RPC). Peers dial you without learning your IP.</p>
+            <p class="card-meta">Tool: <strong>Tor HS + --public-addr</strong></p>
+          </article>
+          <article class="card">
+            <span class="card-num">L3</span>
+            <h3>Wallet over Tor</h3>
+            <p>Wallet reaches only your node via SOCKS → onion RPC (or local RPC if co-located).</p>
+            <p class="card-meta">Prefer a node <strong>you</strong> control</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="l1">
+        <h2>L1 — Outbound only</h2>
+        <p>Install Tor so SOCKS is on <code>127.0.0.1:9050</code>, then:</p>
+        <div class="code-block">
+          <div class="code-bar">
+            <span>shell</span>
+            <button type="button" class="copy" data-copy="l1">Copy</button>
+          </div>
+          <pre id="l1"><code># Confirm Tor works
+curl -sS --socks5-hostname 127.0.0.1:9050 https://check.torproject.org/api/ip
+
+# Node: all TCP via Tor; P2P bound to localhost (no clearnet inbound)
+torsocks ./target/release/kohl \
+  --chain kohl-ash \
+  --validator \
+  --listen-addr /ip4/127.0.0.1/tcp/30333 \
+  --rpc-port 9944 \
+  --network-backend libp2p \
+  --mining-seed &lt;64-hex&gt;</code></pre>
+        </div>
+        <ul class="bullets">
+          <li>There is <strong>no</strong> <code>--proxy-server</code> flag on current Kohl / Substrate builds.</li>
+          <li>Prefer <code>--network-backend libp2p</code> when experimenting with onion multiaddrs.</li>
+          <li>You still need bootnodes reachable from Tor (clearnet via exit, or onion).</li>
+        </ul>
+      </section>
+
+      <section id="l2">
+        <h2>L2 — Onion service for P2P</h2>
+        <h3>1. Tor hidden service</h3>
+        <div class="code-block">
+          <div class="code-bar">
+            <span>torrc</span>
+            <button type="button" class="copy" data-copy="torrc">Copy</button>
+          </div>
+          <pre id="torrc"><code>SocksPort 9050
+
+## P2P onion → local Kohl
+HiddenServiceDir /var/lib/tor/kohl-p2p/
+HiddenServicePort 30333 127.0.0.1:30333
+
+## Optional separate RPC onion (wallet only)
+# HiddenServiceDir /var/lib/tor/kohl-rpc/
+# HiddenServicePort 9944 127.0.0.1:9944</code></pre>
+        </div>
+        <p>Restart Tor, then:</p>
+        <div class="code-block">
+          <div class="code-bar"><span>shell</span></div>
+          <pre><code>sudo cat /var/lib/tor/kohl-p2p/hostname
+# e.g. abcdef…xyz.onion</code></pre>
+        </div>
+
+        <h3>2. Stable PeerId + node</h3>
+        <div class="code-block">
+          <div class="code-bar">
+            <span>shell</span>
+            <button type="button" class="copy" data-copy="l2">Copy</button>
+          </div>
+          <pre id="l2"><code>mkdir -p ~/.kohl
+./target/release/kohl key generate-node-key --file ~/.kohl/node-key
+
+ONION=$(sudo cat /var/lib/tor/kohl-p2p/hostname | tr -d '\n' | sed 's/\.onion$//')
+
+./target/release/kohl \
+  --chain kohl-ash \
+  --validator \
+  --base-path ~/.kohl/chain \
+  --node-key-file ~/.kohl/node-key \
+  --listen-addr /ip4/127.0.0.1/tcp/30333 \
+  --public-addr "/onion3/${ONION}:30333" \
+  --rpc-port 9944 \
+  --rpc-cors localhost \
+  --network-backend libp2p \
+  --mining-seed &lt;64-hex&gt;</code></pre>
+        </div>
+        <p>
+          Multiaddr uses the 56-character v3 name <strong>without</strong> the
+          <code>.onion</code> suffix. Publish to peers:
+        </p>
+        <div class="code-block">
+          <div class="code-bar"><span>multiaddr</span></div>
+          <pre><code>/onion3/&lt;v3&gt;:30333/p2p/&lt;PeerId&gt;</code></pre>
+        </div>
+      </section>
+
+      <section id="l3">
+        <h2>L3 — Wallet / RPC over Tor</h2>
+        <ul class="bullets">
+          <li><strong>Same machine:</strong> keep RPC on <code>127.0.0.1:9944</code>; wallet uses localhost. Node handles Tor for p2p.</li>
+          <li><strong>Remote wallet:</strong> enable a dedicated RPC onion; client uses SOCKS:</li>
+        </ul>
+        <div class="code-block">
+          <div class="code-bar">
+            <span>shell</span>
+            <button type="button" class="copy" data-copy="rpc">Copy</button>
+          </div>
+          <pre id="rpc"><code>curl --socks5-hostname 127.0.0.1:9050 \
+  -H 'content-type: application/json' \
+  -d '{"id":1,"jsonrpc":"2.0","method":"system_health","params":[]}' \
+  http://&lt;rpc-onion&gt;.onion:9944</code></pre>
+        </div>
+        <p class="note">
+          Treat an onion RPC like a secret URL. Do not expose <code>author_*</code> broadly.
+          Prefer a full node you control over third-party public RPC.
+        </p>
+      </section>
+
+      <section id="check">
+        <h2>Checklist</h2>
+        <ul class="checklist-page">
+          <li><code>check.torproject.org</code> via SOCKS reports <code>IsTor: true</code></li>
+          <li><code>--listen-addr</code> is localhost when using a hidden service</li>
+          <li>Tor <code>HiddenServicePort</code> target matches Kohl’s listen port</li>
+          <li>Onion multiaddr omits <code>.onion</code>; PeerId stable via <code>--node-key-file</code></li>
+          <li>RPC not on <code>0.0.0.0</code> unless intentional and filtered</li>
+          <li>Logs show <code>Dandelion++ enabled</code> (<code>kohl::dandelion</code>)</li>
+        </ul>
+      </section>
+
+      <section class="doc-foot">
+        <h2>Go deeper</h2>
+        <ul class="doc-links">
+          <li><a href="https://github.com/iho/kohl/blob/main/docs/tor-runbook.md">docs/tor-runbook.md</a> — full troubleshooting &amp; profiles</li>
+          <li><a href="https://github.com/iho/kohl/blob/main/README.md">README</a> — quick start &amp; Dandelion++</li>
+          <li><a href="https://github.com/iho/kohl/tree/main/node/src/dandelion">node/src/dandelion</a> — stem/fluff implementation</li>
+        </ul>
+        <p><a class="btn btn-secondary" href="/">← Back home</a></p>
+      </section>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap bar">
+      <p>© <span id="y"></span> Kohl · Private cash L1</p>
+      <p class="fine">Software is experimental. Privacy is layered — use it carefully.</p>
+    </div>
+  </footer>
+
+  <script>
+    document.getElementById("y").textContent = new Date().getFullYear();
+    document.querySelectorAll("[data-copy]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-copy");
+        const el = document.getElementById(id);
+        const text = el ? el.innerText : "";
+        try {
+          await navigator.clipboard.writeText(text);
+          btn.textContent = "Copied";
+          setTimeout(() => (btn.textContent = "Copy"), 1600);
+        } catch {
+          btn.textContent = "Select & copy";
+        }
+      });
+    });
+  </script>
+</body>
+</html>

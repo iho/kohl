@@ -1,0 +1,39 @@
+# Kohl miner that dials a public bootnode
+#
+# Install similar to kohl-seed.service; env file: /etc/kohl/miner.env
+# See scripts/systemd/kohl-miner.env.example
+
+[Unit]
+Description=Kohl mainnet miner
+Documentation=https://github.com/iho/kohl/blob/main/docs/production-bootnode.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kohl
+Group=kohl
+EnvironmentFile=/etc/kohl/miner.env
+ExecStart=/usr/local/bin/kohl \
+  --chain ${CHAIN} \
+  --base-path /var/lib/kohl/chain \
+  --node-key-file /var/lib/kohl/node-key \
+  --name ${NODE_NAME} \
+  --validator \
+  --mining-seed ${MINING_SEED} \
+  --bootnodes ${BOOTNODE} \
+  --listen-addr ${LISTEN_ADDR} \
+  --public-addr ${PUBLIC_ADDR} \
+  --rpc-port ${RPC_PORT} \
+  --rpc-cors localhost
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/kohl
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -53,6 +53,9 @@ sc-cli = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-s
 sc-service = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sc-executor = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sc-network = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
+sc-network-sync = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
+sc-network-transactions = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
+sc-network-types = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sc-consensus = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sc-transaction-pool = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sc-transaction-pool-api = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
@@ -60,12 +63,16 @@ sc-basic-authorship = { git = "https://github.com/paritytech/polkadot-sdk", tag 
 sc-offchain = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sc-telemetry = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sp-blockchain = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
+sp-consensus = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 sp-storage = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606", default-features = false }
 sp-timestamp = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 substrate-frame-rpc-system = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2606" }
 clap = { version = "4", features = ["derive"] }
 futures = { version = "0.3" }
+futures-timer = "3"
 jsonrpsee = { version = "0.24", features = ["server", "macros"] }
+parking_lot = "0.12"
+array-bytes = "6"
 
 # Local crates
 ringct-primitives = { path = "primitives/ringct-primitives", default-features = false }

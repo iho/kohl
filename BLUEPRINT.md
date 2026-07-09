@@ -38,8 +38,9 @@ and `ringct_crypto` host functions stay as imports); this is wired in `.cargo/co
 via `WASM_BUILD_RUSTFLAGS`.
 
 **Remaining work**: merge machine weights from `./scripts/benchmark-ringct.sh`
-into production `WeightInfo` after a full STEPS/REPEAT run; Dandelion++ tx
-propagation; external crypto audit (Phase 5).
+into production `WeightInfo` after a full STEPS/REPEAT run; external crypto
+audit (Phase 5). Dandelion++ stem/fluff diffusion is implemented in
+`node/src/dandelion/`.
 
 **Benchmarks**: `frame_benchmarking::Benchmark` is exported by the runtime.
 Because RingCT uses custom host functions, measure with
@@ -735,8 +736,9 @@ before launch; anyone can mine block 1.
   black-marble flooding (attacker mints outputs to dilute decoys), timing/decoy-sampling
   statistics, EAE (exchange-attacker-exchange) correlation. Mitigations: exact Monero
   sampler, mandatory uniform tx shape (pad to 2 outputs like Monero), `SPENDABLE_AGE`.
-- Network-layer leakage: recommend running nodes over Tor/i2p; consider Dandelion++ on
-  the txpool gossip as a Phase 5 item.
+- Network-layer leakage: Dandelion++ stem/fluff diffusion is enabled on the
+  node (`node/src/dandelion/`); still run Tor/i2p for defence in depth — see
+  [docs/tor-runbook.md](docs/tor-runbook.md).
 
 ### 9.3 Alternatives & future work
 

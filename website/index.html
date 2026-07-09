@@ -39,7 +39,9 @@
       <nav class="nav" aria-label="Primary">
         <a href="#privacy">Privacy</a>
         <a href="#design">Design</a>
-        <a href="#tokenomics">Tokenomics</a>
+        <a href="#network">Network</a>
+        <a href="/run/">Run</a>
+        <a href="/tor/">Tor</a>
         <a href="#status">Status</a>
         <a href="#start">Start</a>
       </nav>
@@ -255,15 +257,83 @@ unsigned extrinsic  ────────► shape / maturity / fee
       </div>
     </section>
 
-    <section id="status" class="section section-alt">
+    <section id="network" class="section section-alt">
+      <div class="wrap">
+        <header class="section-head">
+          <p class="eyebrow">Network privacy</p>
+          <h2>Dandelion++ on by default. Tor still recommended.</h2>
+          <p class="section-lede">
+            On-chain privacy does not hide your IP. Kohl stems transactions before
+            flooding them; operators should still route the node (and wallet RPC)
+            over Tor for defence in depth.
+          </p>
+        </header>
+        <div class="cards three">
+          <article class="card">
+            <span class="card-num">01</span>
+            <h3>Dandelion++</h3>
+            <p>
+              Local transfers enter a stem path on <code>/kohl/dandelion/1</code>,
+              then fluff into ordinary gossip (~10% per hop, embargo fallback).
+            </p>
+            <p class="card-meta">Built into the node</p>
+          </article>
+          <article class="card">
+            <span class="card-num">02</span>
+            <h3>Outbound Tor</h3>
+            <p>
+              There is no <code>--proxy-server</code> flag. Use <code>torsocks</code>
+              and bind P2P to localhost so dial-out goes through SOCKS.
+            </p>
+            <p class="card-meta">Level 1 in the runbook</p>
+          </article>
+          <article class="card">
+            <span class="card-num">03</span>
+            <h3>Onion services</h3>
+            <p>
+              Tor hidden service → <code>127.0.0.1:30333</code>, advertise
+              <code>/onion3/…</code> with <code>--public-addr</code>. Optional RPC onion for wallets.
+            </p>
+            <p class="card-meta">Level 2–3 in the runbook</p>
+          </article>
+        </div>
+        <div class="start-grid" style="margin-top: 1.5rem">
+          <div class="code-block">
+            <div class="code-bar">
+              <span>shell · outbound via Tor</span>
+              <button type="button" class="copy" data-copy="tor">Copy</button>
+            </div>
+            <pre id="tor"><code>torsocks ./target/release/kohl \
+  --chain kohl-ash --validator \
+  --listen-addr /ip4/127.0.0.1/tcp/30333 \
+  --rpc-port 9944 \
+  --network-backend libp2p \
+  --mining-seed &lt;64-hex&gt;</code></pre>
+          </div>
+          <div class="start-aside">
+            <h3>Full runbook</h3>
+            <ul class="doc-links">
+              <li><a href="/run/">kohl.network/run</a> — public seed &amp; miners</li>
+              <li><a href="/tor/">kohl.network/tor</a> — Tor guide</li>
+              <li><a href="https://github.com/iho/kohl/blob/main/docs/production-bootnode.md">production-bootnode.md</a></li>
+            </ul>
+            <p class="footnote">
+              Prefer a remote full node you control. Third-party public RPC undoes
+              much of your network privacy regardless of Tor.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="status" class="section">
       <div class="wrap">
         <header class="section-head">
           <p class="eyebrow">Status</p>
-          <h2>Implemented through Phase&nbsp;4</h2>
+          <h2>Implemented through Phase&nbsp;4 (+ Dandelion++)</h2>
           <p class="section-lede">
-            Privacy crypto, monetary rules, LWMA difficulty, PoW node, and wallet crate
-            against <code>polkadot-stable2606</code>. A single-node dev chain can mine and
-            mint coinbase outputs.
+            Privacy crypto, monetary rules, LWMA difficulty, PoW node, wallet crate,
+            and Dandelion++ diffusion against <code>polkadot-stable2606</code>.
           </p>
         </header>
         <div class="status-grid">
@@ -274,11 +344,11 @@ unsigned extrinsic  ────────► shape / maturity / fee
             <li>Runnable PoW node (<code>--dev</code>)</li>
             <li>Wallet scan + multi-input spends</li>
             <li>Local testnet <code>kohl-ash</code></li>
+            <li>Dandelion++ stem / fluff gossip</li>
             <li>Fuzz targets · crypto benches · cargo-deny</li>
           </ul>
           <ul class="status-list next">
             <li>Machine weights into production <code>WeightInfo</code></li>
-            <li>Dandelion++ transaction propagation</li>
             <li>External cryptography audit</li>
             <li>Production RandomX (feature-gated today)</li>
           </ul>
@@ -286,7 +356,7 @@ unsigned extrinsic  ────────► shape / maturity / fee
       </div>
     </section>
 
-    <section id="start" class="section">
+    <section id="start" class="section section-alt">
       <div class="wrap">
         <header class="section-head">
           <p class="eyebrow">Get started</p>
@@ -295,29 +365,49 @@ unsigned extrinsic  ────────► shape / maturity / fee
         <div class="start-grid">
           <div class="code-block">
             <div class="code-bar">
-              <span>shell</span>
+              <span>shell · public seed (mainnet)</span>
               <button type="button" class="copy" data-copy="build">Copy</button>
             </div>
             <pre id="build"><code>cargo build -p kohl-node --release
 
-# Throwaway miner keys (printed at startup):
-./target/release/kohl --dev --validator --tmp
+# One-time: node key + data dir
+./scripts/setup-seed.sh
 
-# Persistent payout (same seed as kohl-wallet):
-./target/release/kohl --dev --validator --tmp \
-  --mining-seed &lt;64-hex&gt;</code></pre>
+# Public seed — open TCP 30333; set your IP
+PUBLIC_ADDR=/ip4/YOUR.PUBLIC.IP/tcp/30333 \
+MINING_SEED=&lt;64-hex&gt; \
+  ./scripts/run-seed.sh
+
+# PeerId for bootnode string:
+./target/release/kohl key inspect-node-key --file ./data/seed/node-key
+# → /ip4/YOUR.PUBLIC.IP/tcp/30333/p2p/&lt;PeerId&gt;
+
+# Optional: ship a chainspec with bootnodes embedded
+./scripts/make-chainspec.sh --chain kohl \
+  --bootnode /ip4/YOUR.PUBLIC.IP/tcp/30333/p2p/&lt;PeerId&gt; \
+  --output chainspecs/kohl.json</code></pre>
           </div>
           <div class="start-aside">
-            <h3>Docs in the repo</h3>
+            <h3>Miners connect with</h3>
+            <div class="code-block" style="box-shadow:none;margin:0 0 1rem">
+              <div class="code-bar"><span>shell</span></div>
+              <pre style="font-size:0.78rem"><code>BOOTNODE=/ip4/…/tcp/30333/p2p/… \
+MINING_SEED=&lt;64-hex&gt; \
+  ./scripts/run-miner.sh
+
+# or: --chain ./chainspecs/kohl.json</code></pre>
+            </div>
+            <h3>Docs</h3>
             <ul class="doc-links">
+              <li><a href="https://github.com/iho/kohl/blob/main/docs/production-bootnode.md">Production bootnode runbook</a></li>
+              <li><a href="https://github.com/iho/kohl/blob/main/docs/tor-runbook.md">Tor runbook</a></li>
+              <li><a href="https://github.com/iho/kohl/blob/main/scripts/systemd/kohl-seed.service">systemd seed unit</a></li>
               <li><a href="https://github.com/iho/kohl/blob/main/README.md">README — quick start</a></li>
-              <li><a href="https://github.com/iho/kohl/blob/main/BLUEPRINT.md">BLUEPRINT — architecture</a></li>
-              <li><a href="https://github.com/iho/kohl/blob/main/GLOSSARY.md">GLOSSARY — terms &amp; math</a></li>
-              <li><a href="https://github.com/iho/kohl/blob/main/examples/learn_ringct.py">learn_ringct.py — interactive tour</a></li>
+              <li><a href="https://github.com/iho/kohl/blob/main/BLUEPRINT.md">BLUEPRINT</a></li>
             </ul>
             <p class="footnote">
-              Until Dandelion++ lands, prefer Tor (or I2P) for P2P and RPC so IP metadata
-              does not undo on-chain privacy.
+              Use <code>--chain kohl</code> (mainnet) or <code>kohl-ash</code> (testnet). Keep RPC on
+              localhost; miners only need P2P port 30333.
             </p>
           </div>
         </div>
