@@ -60,6 +60,23 @@ pub type Payload = BoundedVec<u8, ConstU32<MAX_PAYLOAD_BYTES>>;
 /// the runtime, not the miner (see `ProvideInherent::create_inherent`).
 pub type CoinbaseInherent = ([u8; 32], [u8; 32]);
 
+/// The message every CLSAG in a transfer signs: a hash binding the rings,
+/// key images, pseudo-commitments, all outputs, the tx pubkey and the fee —
+/// everything except the signatures themselves (and the range proof, which
+/// its own transcript binds to the commitments).
+///
+/// A free function (not a pallet method) so wallets can build and sign
+/// transactions without a runtime.
+pub fn signing_hash(tx: &TransferTx) -> [u8; 32] {
+    let rings: Vec<&BoundedVec<u64, ConstU32<MAX_RING_SIZE>>> =
+        tx.inputs.iter().map(|i| &i.ring).collect();
+    let key_images: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.key_image).collect();
+    let pseudos: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.pseudo_commitment).collect();
+    sp_io::hashing::blake2_256(
+        &(SIGNING_DOMAIN, rings, key_images, pseudos, &tx.outputs, tx.tx_pubkey, tx.fee).encode(),
+    )
+}
+
 /// A newly created confidential output as it appears inside a transaction.
 #[derive(
     Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
@@ -98,6 +115,9 @@ pub struct StoredOutput<BlockNumber> {
     /// wallets need it to scan.
     pub tx_pubkey: [u8; 32],
     pub view_tag: u8,
+    /// Receiver payload (masked amount) — empty for coinbase outputs, whose
+    /// amount is already public.
+    pub payload: Payload,
     /// Public amount — `Some` only for coinbase outputs.
     pub amount: Option<u64>,
     /// Block in which the output was created (maturity rules).
@@ -330,6 +350,7 @@ pub mod pallet {
                         commitment: crypto_host::value_commitment_v1(out.amount),
                         tx_pubkey,
                         view_tag: 0,
+                        payload: Default::default(),
                         amount: Some(out.amount),
                         height,
                         coinbase: true,
@@ -439,20 +460,9 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
-        /// The message every CLSAG signs: a hash binding the rings, key
-        /// images, pseudo-commitments, all outputs, the tx pubkey and the
-        /// fee — everything except the signatures themselves (and the range
-        /// proof, which its transcript binds to the commitments).
+        /// The message every CLSAG signs (see the free [`signing_hash`]).
         pub fn signing_hash(tx: &TransferTx) -> [u8; 32] {
-            let rings: Vec<&BoundedVec<u64, ConstU32<MAX_RING_SIZE>>> =
-                tx.inputs.iter().map(|i| &i.ring).collect();
-            let key_images: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.key_image).collect();
-            let pseudos: Vec<[u8; 32]> =
-                tx.inputs.iter().map(|i| i.pseudo_commitment).collect();
-            sp_io::hashing::blake2_256(
-                &(SIGNING_DOMAIN, rings, key_images, pseudos, &tx.outputs, tx.tx_pubkey, tx.fee)
-                    .encode(),
-            )
+            super::signing_hash(tx)
         }
 
         /// Full consensus verification of a transfer (BLUEPRINT.md §3.4).
@@ -553,6 +563,7 @@ pub mod pallet {
                         commitment: out.commitment,
                         tx_pubkey: tx.tx_pubkey,
                         view_tag: out.view_tag,
+                        payload: out.payload.clone(),
                         amount: None,
                         height,
                         coinbase: false,

@@ -76,20 +76,38 @@ fn ring_blob(ring: &[u64]) -> Vec<u8> {
     blob
 }
 
-/// Build a fully valid ring transfer spending `real` hidden in `ring`
-/// (which must contain `real.index`), creating outputs of `out_amounts`
-/// to fresh random keys.
-fn build_ring_spend(real: &Owned, ring: Vec<u64>, out_amounts: &[u64], fee: u64) -> TransferTx {
-    let position = ring.iter().position(|i| *i == real.index).expect("real in ring");
-    let pseudo_blinding = crypto::random_blinding();
-    let pseudo_commitment = crypto::commit(real.amount, &pseudo_blinding).unwrap();
-    let key_image = clsag::key_image(&real.secret).unwrap();
+/// One input to assemble into a multi-spend transfer.
+struct SpendSpec<'a> {
+    real: &'a Owned,
+    ring: Vec<u64>,
+}
 
+/// Build a fully valid ring transfer spending one or more reals (each hidden
+/// in its own ring), creating outputs of `out_amounts` to fresh random keys.
+/// Inputs are sorted by key image as required by consensus.
+fn build_ring_spends(spends: &[SpendSpec], out_amounts: &[u64], fee: u64) -> TransferTx {
+    assert!(!spends.is_empty());
+    // Note: callers may deliberately unbalance amounts to test the on-chain
+    // balance equation; we do not assert amount conservation here.
+
+    // Pseudo commitments first (need their blindings for the output balancer).
+    let mut prepared = Vec::with_capacity(spends.len());
+    for spec in spends {
+        let position =
+            spec.ring.iter().position(|i| *i == spec.real.index).expect("real in ring");
+        let pseudo_blinding = crypto::random_blinding();
+        let pseudo_commitment = crypto::commit(spec.real.amount, &pseudo_blinding).unwrap();
+        let key_image = clsag::key_image(&spec.real.secret).unwrap();
+        prepared.push((spec, position, pseudo_blinding, pseudo_commitment, key_image));
+    }
+    // Canonical input order by key image.
+    prepared.sort_by(|a, b| a.4.cmp(&b.4));
+
+    let pseudo_blindings: Vec<[u8; 32]> = prepared.iter().map(|p| p.2).collect();
     let mut out_blindings: Vec<[u8; 32]> =
         (1..out_amounts.len()).map(|_| crypto::random_blinding()).collect();
-    out_blindings.push(
-        crypto::balancing_blinding(&[pseudo_blinding], &out_blindings).unwrap(),
-    );
+    out_blindings
+        .push(crypto::balancing_blinding(&pseudo_blindings, &out_blindings).unwrap());
     let (proof, commitments) = crypto::prove_range(out_amounts, &out_blindings).unwrap();
     let outputs: Vec<Output> = commitments
         .into_iter()
@@ -101,27 +119,48 @@ fn build_ring_spend(real: &Owned, ring: Vec<u64>, out_amounts: &[u64], fee: u64)
         })
         .collect();
 
-    let blob = ring_blob(&ring);
-    let mut tx = TransferTx {
-        inputs: bounded::<_, 8>(vec![RingInput {
-            ring: bounded::<_, 16>(ring),
-            key_image,
-            pseudo_commitment,
+    let mut inputs: Vec<RingInput> = prepared
+        .iter()
+        .map(|(spec, _, _, pseudo_commitment, key_image)| RingInput {
+            ring: bounded::<_, 16>(spec.ring.clone()),
+            key_image: *key_image,
+            pseudo_commitment: *pseudo_commitment,
             clsag: Default::default(),
-        }]),
+        })
+        .collect();
+
+    let mut tx = TransferTx {
+        inputs: bounded::<_, 8>(inputs.clone()),
         outputs: bounded::<_, 8>(outputs),
         tx_pubkey: crypto::random_secret_key().1,
         range_proof: bounded::<_, 1024>(proof),
         fee,
     };
     let msg = RingCt::signing_hash(&tx);
-    let sig =
-        clsag::sign(&msg, &blob, position, &real.secret, &real.blinding, &pseudo_blinding)
-            .expect("valid signing inputs");
-    assert_eq!(sig.key_image, key_image);
-    assert_eq!(sig.pseudo_commitment, pseudo_commitment);
-    tx.inputs[0].clsag = bounded::<_, 576>(sig.signature);
+    for (i, (spec, position, pseudo_blinding, pseudo_commitment, key_image)) in
+        prepared.iter().enumerate()
+    {
+        let blob = ring_blob(&spec.ring);
+        let sig = clsag::sign(
+            &msg,
+            &blob,
+            *position,
+            &spec.real.secret,
+            &spec.real.blinding,
+            pseudo_blinding,
+        )
+        .expect("valid signing inputs");
+        assert_eq!(sig.key_image, *key_image);
+        assert_eq!(sig.pseudo_commitment, *pseudo_commitment);
+        inputs[i].clsag = bounded::<_, 576>(sig.signature);
+    }
+    tx.inputs = bounded::<_, 8>(inputs);
     tx
+}
+
+/// Single-input convenience wrapper around [`build_ring_spends`].
+fn build_ring_spend(real: &Owned, ring: Vec<u64>, out_amounts: &[u64], fee: u64) -> TransferTx {
+    build_ring_spends(&[SpendSpec { real, ring }], out_amounts, fee)
 }
 
 /// Standard scenario: 4 matured coinbase outputs, spend `bed[real]` through
@@ -483,5 +522,340 @@ fn stealth_end_to_end() {
             Owned { index: 0, secret, amount: reward / 2, blinding: [0u8; 32] };
         let tx = build_ring_spend(&owned, vec![0, 1, 2, 3], &[reward / 2 - FEE], FEE);
         assert_ok!(RingCt::transfer(RuntimeOrigin::none(), tx));
+    });
+}
+
+// ---- §3.4 verification coverage (shape, multi-input, crypto edge cases) ----
+
+#[test]
+fn multi_input_transfer_happy_path() {
+    new_test_ext().execute_with(|| {
+        let bed = mint_ring_bed(RING);
+        run_to_block(100);
+        let ring: Vec<u64> = bed.iter().map(|o| o.index).collect();
+        let a = &bed[0];
+        let b = &bed[1];
+        let total = a.amount + b.amount;
+        let tx = build_ring_spends(
+            &[
+                SpendSpec { real: a, ring: ring.clone() },
+                SpendSpec { real: b, ring: ring.clone() },
+            ],
+            &[total / 2 - FEE, total - total / 2],
+            FEE,
+        );
+        assert_eq!(tx.inputs.len(), 2);
+        // Canonical form: strictly increasing key images.
+        assert!(tx.inputs[0].key_image < tx.inputs[1].key_image);
+
+        let kis: Vec<_> = tx.inputs.iter().map(|i| i.key_image).collect();
+        assert_ok!(RingCt::transfer(RuntimeOrigin::none(), tx));
+        for ki in &kis {
+            assert!(crate::KeyImages::<Test>::contains_key(ki));
+        }
+        assert_eq!(crate::BlockFees::<Test>::get(), FEE);
+        assert_eq!(crate::NextOutputIndex::<Test>::get(), RING as u64 + 2);
+    });
+}
+
+#[test]
+fn multi_input_unsorted_key_images_fail() {
+    new_test_ext().execute_with(|| {
+        let bed = mint_ring_bed(RING);
+        run_to_block(100);
+        let ring: Vec<u64> = bed.iter().map(|o| o.index).collect();
+        let mut tx = build_ring_spends(
+            &[
+                SpendSpec { real: &bed[0], ring: ring.clone() },
+                SpendSpec { real: &bed[1], ring: ring.clone() },
+            ],
+            &[bed[0].amount + bed[1].amount - FEE],
+            FEE,
+        );
+        // Reverse a valid sorted pair → InputsNotSortedUnique.
+        tx.inputs.as_mut().swap(0, 1);
+        assert_noop!(
+            RingCt::transfer(RuntimeOrigin::none(), tx),
+            Error::<Test>::InputsNotSortedUnique
+        );
+    });
+}
+
+#[test]
+fn unsorted_or_duplicate_ring_indices_fail() {
+    new_test_ext().execute_with(|| {
+        let bed = mint_ring_bed(RING);
+        run_to_block(100);
+        let real = &bed[0];
+
+        // Unsorted but otherwise a valid spend against a sorted signing ring.
+        let sorted: Vec<u64> = bed.iter().map(|o| o.index).collect();
+        let mut tx = build_ring_spend(real, sorted.clone(), &[real.amount - FEE], FEE);
+        tx.inputs[0].ring = bounded::<_, 16>(vec![sorted[0], sorted[2], sorted[1], sorted[3]]);
+        assert_noop!(
+            RingCt::transfer(RuntimeOrigin::none(), tx),
+            Error::<Test>::RingIndicesInvalid
+        );
+
+        // Duplicate indices (not strictly increasing).
+        let mut tx = build_ring_spend(real, sorted.clone(), &[real.amount - FEE], FEE);
+        tx.inputs[0].ring =
+            bounded::<_, 16>(vec![sorted[0], sorted[1], sorted[1], sorted[2]]);
+        assert_noop!(
+            RingCt::transfer(RuntimeOrigin::none(), tx),
+            Error::<Test>::RingIndicesInvalid
+        );
+    });
+}
+
+#[test]
+fn empty_inputs_or_outputs_fail() {
+    new_test_ext().execute_with(|| {
+        let (_, mut tx) = bed_and_spend(0);
+        tx.inputs = bounded::<_, 8>(vec![]);
+        assert_noop!(
+            RingCt::transfer(RuntimeOrigin::none(), tx),
+            Error::<Test>::EmptyInputsOrOutputs
+        );
+
+        let (_, mut tx) = bed_and_spend(0);
+        tx.outputs = bounded::<_, 8>(vec![]);
+        // Empty outputs: shape check fails before crypto (fee still present).
+        assert_noop!(
+            RingCt::transfer(RuntimeOrigin::none(), tx),
+            Error::<Test>::EmptyInputsOrOutputs
+        );
+    });
+}
+
+#[test]
+fn fee_below_per_byte_floor_fails() {
+    new_test_ext().execute_with(|| {
+        let bed = mint_ring_bed(RING);
+        run_to_block(100);
+        let real = &bed[0];
+        let ring: Vec<u64> = bed.iter().map(|o| o.index).collect();
+        // MinFeePerByte = 1 in the mock, so fee 0 is always below the floor.
+        let tx = build_ring_spend(real, ring, &[real.amount], 0);
+        assert_noop!(RingCt::transfer(RuntimeOrigin::none(), tx), Error::<Test>::FeeTooLow);
+    });
+}
+
+#[test]
+fn invalid_range_proof_fails_after_clsag() {
+    new_test_ext().execute_with(|| {
+        // Range proof is *not* in the CLSAG message; tampering it leaves the
+        // signature valid and must be caught by the Bulletproof check.
+        let (_, mut tx) = bed_and_spend(0);
+        let mut proof = tx.range_proof.to_vec();
+        proof[0] ^= 0xff;
+        tx.range_proof = bounded::<_, 1024>(proof);
+        assert_noop!(
+            RingCt::transfer(RuntimeOrigin::none(), tx),
+            Error::<Test>::RangeProofInvalid
+        );
+    });
+}
+
+#[test]
+fn identity_and_garbage_key_images_fail_clsag() {
+    new_test_ext().execute_with(|| {
+        // Ristretto identity (canonical all-zero encoding).
+        let (_, mut tx) = bed_and_spend(0);
+        tx.inputs[0].key_image = [0u8; 32];
+        assert_noop!(RingCt::transfer(RuntimeOrigin::none(), tx), Error::<Test>::ClsagInvalid);
+    });
+    new_test_ext().execute_with(|| {
+        // Non-canonical / non-decompressible point bytes.
+        let (_, mut tx) = bed_and_spend(0);
+        tx.inputs[0].key_image = [0xff; 32];
+        assert_noop!(RingCt::transfer(RuntimeOrigin::none(), tx), Error::<Test>::ClsagInvalid);
+    });
+}
+
+#[test]
+fn non_canonical_pseudo_commitment_fails() {
+    new_test_ext().execute_with(|| {
+        let (_, mut tx) = bed_and_spend(0);
+        tx.inputs[0].pseudo_commitment = [0xff; 32];
+        // Bound into the CLSAG message + ring equation → ClsagInvalid first.
+        assert_noop!(RingCt::transfer(RuntimeOrigin::none(), tx), Error::<Test>::ClsagInvalid);
+    });
+}
+
+#[test]
+fn non_coinbase_spendable_age_is_enforced() {
+    new_test_ext().execute_with(|| {
+        let bed = mint_ring_bed(RING);
+        run_to_block(100);
+
+        // Controlled spend so we retain the one-time secret of the new output.
+        let real = &bed[0];
+        let ring: Vec<u64> = bed.iter().map(|o| o.index).collect();
+        let out_amount = real.amount - FEE;
+        let (out_secret, out_public) = crypto::random_secret_key();
+        // Single output absorbs the full pseudo blinding (balance equation).
+        let pseudo_blinding = crypto::random_blinding();
+        let out_blinding = pseudo_blinding;
+        let (proof, _) = crypto::prove_range(&[out_amount], &[out_blinding]).unwrap();
+
+        let mut tx = TransferTx {
+            inputs: bounded::<_, 8>(vec![RingInput {
+                ring: bounded::<_, 16>(ring.clone()),
+                key_image: clsag::key_image(&real.secret).unwrap(),
+                pseudo_commitment: crypto::commit(real.amount, &pseudo_blinding).unwrap(),
+                clsag: Default::default(),
+            }]),
+            outputs: bounded::<_, 8>(vec![Output {
+                one_time_key: out_public,
+                commitment: crypto::commit(out_amount, &out_blinding).unwrap(),
+                view_tag: 0,
+                payload: Default::default(),
+            }]),
+            tx_pubkey: crypto::random_secret_key().1,
+            range_proof: bounded::<_, 1024>(proof),
+            fee: FEE,
+        };
+        let msg = RingCt::signing_hash(&tx);
+        let sig = clsag::sign(
+            &msg,
+            &ring_blob(&ring),
+            0,
+            &real.secret,
+            &real.blinding,
+            &pseudo_blinding,
+        )
+        .unwrap();
+        tx.inputs[0].clsag = bounded::<_, 576>(sig.signature);
+        let first_out = crate::NextOutputIndex::<Test>::get();
+        assert_ok!(RingCt::transfer(RuntimeOrigin::none(), tx));
+
+        // Height 100, SpendableAge 10 → spendable at block ≥ 110.
+        let owned = Owned {
+            index: first_out,
+            secret: out_secret,
+            amount: out_amount,
+            blinding: out_blinding,
+        };
+        let mut re_ring = vec![owned.index, bed[1].index, bed[2].index, bed[3].index];
+        re_ring.sort();
+        let early = build_ring_spend(&owned, re_ring.clone(), &[out_amount - FEE], FEE);
+        assert_noop!(
+            RingCt::transfer(RuntimeOrigin::none(), early),
+            Error::<Test>::OutputImmature
+        );
+
+        run_to_block(110);
+        let ready = build_ring_spend(&owned, re_ring, &[out_amount - FEE], FEE);
+        assert_ok!(RingCt::transfer(RuntimeOrigin::none(), ready));
+    });
+}
+
+#[test]
+fn fees_carry_into_next_coinbase() {
+    new_test_ext().execute_with(|| {
+        let (_, tx) = bed_and_spend(0);
+        assert_ok!(RingCt::transfer(RuntimeOrigin::none(), tx));
+        assert_eq!(crate::BlockFees::<Test>::get(), FEE);
+
+        run_to_block(101);
+        let reward = block_reward(crate::Emitted::<Test>::get());
+        let key = crypto::random_secret_key().1;
+        assert_ok!(RingCt::coinbase(
+            RuntimeOrigin::none(),
+            bounded::<_, 8>(vec![CoinbaseOutput {
+                one_time_key: key,
+                amount: reward + FEE,
+            }]),
+            [0u8; 32],
+        ));
+        assert_eq!(crate::BlockFees::<Test>::get(), 0);
+        System::assert_last_event(
+            Event::CoinbaseMinted {
+                first_output_index: RING as u64 + 2,
+                output_count: 1,
+                reward,
+                fees: FEE,
+            }
+            .into(),
+        );
+    });
+}
+
+#[test]
+fn signed_origin_is_rejected() {
+    new_test_ext().execute_with(|| {
+        let (_, tx) = bed_and_spend(0);
+        assert_noop!(
+            RingCt::transfer(RuntimeOrigin::signed(1), tx),
+            sp_runtime::DispatchError::BadOrigin
+        );
+    });
+}
+
+#[test]
+fn invalid_otk_as_ring_member_fails_clsag() {
+    new_test_ext().execute_with(|| {
+        // Coinbase may currently store a non-decompressible OTK (no point
+        // hygiene on create). Using it as a decoy must fail CLSAG verify.
+        let reward = block_reward(0);
+        let keys: Vec<_> = (0..3).map(|_| crypto::random_secret_key()).collect();
+        let share = reward / 4;
+        assert_ok!(RingCt::coinbase(
+            RuntimeOrigin::none(),
+            bounded::<_, 8>(vec![
+                CoinbaseOutput { one_time_key: keys[0].1, amount: share },
+                CoinbaseOutput { one_time_key: keys[1].1, amount: share },
+                CoinbaseOutput { one_time_key: keys[2].1, amount: share },
+                CoinbaseOutput {
+                    one_time_key: [0xff; 32],
+                    amount: reward - 3 * share,
+                },
+            ]),
+            [0u8; 32],
+        ));
+        run_to_block(100);
+
+        let real = Owned {
+            index: 0,
+            secret: keys[0].0,
+            amount: share,
+            blinding: [0u8; 32],
+        };
+        // Sign against a fully valid ring, then swap a decoy for the garbage OTK
+        // index so signing succeeds and chain-side verify hits the bad point.
+        run_to_block(101);
+        let extra = mint_ring_bed(1);
+        run_to_block(200);
+        let mut signing_ring = vec![0, 1, 2, extra[0].index];
+        signing_ring.sort();
+        let mut tx = build_ring_spend(&real, signing_ring, &[real.amount - FEE], FEE);
+
+        // Replace the extra decoy with the garbage-OTK output (index 3).
+        let mut poisoned = tx.inputs[0].ring.to_vec();
+        poisoned.retain(|&i| i != extra[0].index);
+        poisoned.push(3);
+        poisoned.sort();
+        tx.inputs[0].ring = bounded::<_, 16>(poisoned);
+        assert_noop!(RingCt::transfer(RuntimeOrigin::none(), tx), Error::<Test>::ClsagInvalid);
+    });
+}
+
+#[test]
+fn tx_pubkey_and_payload_are_bound_by_clsag() {
+    new_test_ext().execute_with(|| {
+        let (_, mut tx) = bed_and_spend(0);
+        tx.tx_pubkey = crypto::random_secret_key().1;
+        assert_noop!(RingCt::transfer(RuntimeOrigin::none(), tx), Error::<Test>::ClsagInvalid);
+    });
+    new_test_ext().execute_with(|| {
+        let (_, mut tx) = bed_and_spend(0);
+        tx.outputs[0].payload = bounded::<_, 80>(vec![1, 2, 3, 4]);
+        assert_noop!(RingCt::transfer(RuntimeOrigin::none(), tx), Error::<Test>::ClsagInvalid);
+    });
+    new_test_ext().execute_with(|| {
+        let (_, mut tx) = bed_and_spend(0);
+        tx.outputs[0].view_tag ^= 0xaa;
+        assert_noop!(RingCt::transfer(RuntimeOrigin::none(), tx), Error::<Test>::ClsagInvalid);
     });
 }

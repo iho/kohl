@@ -49,10 +49,7 @@ fn decompress(bytes: &[u8; 32]) -> Option<RistrettoPoint> {
     CompressedRistretto::from_slice(bytes).ok()?.decompress()
 }
 
-pub fn keypair() -> (StealthKeys, StealthAddress) {
-    let mut rng = rand::rngs::OsRng;
-    let a = Scalar::random(&mut rng);
-    let b = Scalar::random(&mut rng);
+fn address_of(a: Scalar, b: Scalar) -> (StealthKeys, StealthAddress) {
     (
         StealthKeys { view_secret: a.to_bytes(), spend_secret: b.to_bytes() },
         StealthAddress {
@@ -60,6 +57,19 @@ pub fn keypair() -> (StealthKeys, StealthAddress) {
             spend_public: (G * b).compress().to_bytes(),
         },
     )
+}
+
+pub fn keypair() -> (StealthKeys, StealthAddress) {
+    let mut rng = rand::rngs::OsRng;
+    address_of(Scalar::random(&mut rng), Scalar::random(&mut rng))
+}
+
+/// Deterministic wallet keys from a 32-byte seed (e.g. a mnemonic's entropy).
+/// The same seed always recovers the same address and secrets.
+pub fn keypair_from_seed(seed: &[u8; 32]) -> (StealthKeys, StealthAddress) {
+    let a = crate::clsag::hs(b"kohl/wallet/view/v1", &[seed]);
+    let b = crate::clsag::hs(b"kohl/wallet/spend/v1", &[seed]);
+    address_of(a, b)
 }
 
 /// Fresh per-transaction keypair `(r, R = r·G)`.

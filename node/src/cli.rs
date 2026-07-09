@@ -7,6 +7,12 @@ pub struct Cli {
 
     #[clap(flatten)]
     pub run: sc_cli::RunCmd,
+
+    /// Hex 32-byte seed deriving the miner's payout address. When set, block
+    /// rewards go to a deterministic address a wallet with the same seed can
+    /// scan and spend. Omit for a throwaway per-run address.
+    #[arg(long)]
+    pub mining_seed: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]

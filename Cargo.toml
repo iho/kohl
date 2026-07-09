@@ -9,6 +9,7 @@ members = [
     "consensus/kohl-pow",
     "runtime",
     "node",
+    "wallet",
 ]
 
 [workspace.package]
