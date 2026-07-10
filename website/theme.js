@@ -1,6 +1,7 @@
 /**
  * Light / dark theme for kohl.network.
- * Preference: localStorage → prefers-color-scheme → light.
+ * Also inlined in each HTML page (boot + onclick) so CDN-stale copies of
+ * this file cannot break the toggle.
  */
 (function () {
   var KEY = "kohl-theme";
@@ -15,71 +16,62 @@
     }
   }
 
-  function storedTheme() {
+  function readStored() {
     try {
-      var stored = localStorage.getItem(KEY);
-      if (stored === "light" || stored === "dark") return stored;
+      var s = localStorage.getItem(KEY);
+      if (s === "light" || s === "dark") return s;
     } catch (_) {}
     return null;
   }
 
-  /** Active theme from DOM, then storage, then system. */
-  function current() {
+  function get() {
     var attr = document.documentElement.getAttribute("data-theme");
     if (attr === "light" || attr === "dark") return attr;
-    return storedTheme() || systemTheme();
+    if (document.documentElement.classList.contains("theme-dark")) return "dark";
+    if (document.documentElement.classList.contains("theme-light")) return "light";
+    return readStored() || systemTheme();
   }
 
-  function apply(theme) {
-    if (theme !== "light" && theme !== "dark") theme = "light";
-    document.documentElement.setAttribute("data-theme", theme);
+  function set(theme) {
+    if (theme !== "dark") theme = "light";
+    var root = document.documentElement;
+    root.setAttribute("data-theme", theme);
+    root.classList.remove("theme-light", "theme-dark");
+    root.classList.add("theme-" + theme);
     try {
       localStorage.setItem(KEY, theme);
     } catch (_) {}
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) {
-      meta.setAttribute("content", theme === "dark" ? "#070707" : "#f7f3ec");
-    }
+    if (meta) meta.setAttribute("content", theme === "dark" ? "#070707" : "#f7f3ec");
     var btn = document.getElementById("theme-toggle");
     if (btn) {
-      var toLight = theme === "dark";
       btn.setAttribute(
         "aria-label",
-        toLight ? "Switch to light theme" : "Switch to dark theme"
+        theme === "dark" ? "Switch to light theme" : "Switch to dark theme"
       );
-      btn.setAttribute("title", toLight ? "Light theme" : "Dark theme");
+      btn.setAttribute("title", theme === "dark" ? "Light theme" : "Dark theme");
       btn.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
     }
   }
 
   function toggle(ev) {
-    if (ev) {
-      ev.preventDefault();
-      ev.stopPropagation();
-    }
-    var next = current() === "dark" ? "light" : "dark";
-    apply(next);
+    if (ev && ev.preventDefault) ev.preventDefault();
+    set(get() === "dark" ? "light" : "dark");
     return false;
   }
 
-  // Expose for inline onclick fallback (if script order is odd).
+  window.kohlTheme = { get: get, set: set, toggle: toggle, key: KEY };
+  // Back-compat aliases
   window.__kohlToggleTheme = toggle;
-  window.__kohlApplyTheme = apply;
+  window.__kohlApplyTheme = set;
 
-  apply(storedTheme() || systemTheme());
+  set(readStored() || systemTheme());
 
   function bind() {
     var btn = document.getElementById("theme-toggle");
     if (!btn || btn.getAttribute("data-theme-bound") === "1") return;
     btn.setAttribute("data-theme-bound", "1");
     btn.addEventListener("click", toggle);
-    // Keyboard
-    btn.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        toggle(e);
-      }
-    });
   }
 
   if (document.readyState === "loading") {
@@ -87,6 +79,5 @@
   } else {
     bind();
   }
-  // Late bind if the button is re-rendered (safety).
   setTimeout(bind, 0);
 })();

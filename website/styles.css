@@ -12,9 +12,11 @@
   --radius: 14px;
 }
 
-/* Light (default when data-theme is light or missing) */
-html:not([data-theme]),
-html[data-theme="light"] {
+/* Light (default when data-theme is light or missing).
+ * Also match .theme-light class — set together with data-theme by JS. */
+html:not([data-theme]):not(.theme-dark),
+html[data-theme="light"],
+html.theme-light {
   --bg: #f7f3ec;
   --bg-elev: #efe9df;
   --bg-soft: #fffdf9;
@@ -43,7 +45,8 @@ html[data-theme="light"] {
 }
 
 /* Dark */
-html[data-theme="dark"] {
+html[data-theme="dark"],
+html.theme-dark {
   --bg: #070707;
   --bg-elev: #0e0e0e;
   --bg-soft: #121212;
@@ -87,6 +90,7 @@ body {
   min-height: 100vh;
   color: var(--text);
   background: var(--bg);
+  background-color: var(--bg);
   font-family: var(--sans);
   font-size: 16px;
   line-height: 1.6;
@@ -231,11 +235,13 @@ body {
   display: block;
 }
 
-html[data-theme="dark"] .theme-toggle .icon-sun {
+html[data-theme="dark"] .theme-toggle .icon-sun,
+html.theme-dark .theme-toggle .icon-sun {
   display: block;
 }
 
-html[data-theme="dark"] .theme-toggle .icon-moon {
+html[data-theme="dark"] .theme-toggle .icon-moon,
+html.theme-dark .theme-toggle .icon-moon {
   display: none;
 }
 

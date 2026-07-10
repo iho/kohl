@@ -14,21 +14,56 @@
   <meta property="og:description" content="Production bootnode checklist for Kohl mainnet." />
   <meta property="og:image" content="https://kohl.network/assets/og.png" />
   <script>
-    try {
-      var t = localStorage.getItem("kohl-theme");
-      if (t !== "light" && t !== "dark") {
-        t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    /* Theme control — inline so CDN-stale /theme.js cannot break the toggle. */
+    window.kohlTheme = (function () {
+      var KEY = "kohl-theme";
+      function systemTheme() {
+        try {
+          return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        } catch (e) { return "light"; }
       }
-      document.documentElement.setAttribute("data-theme", t);
-    } catch (e) {
-      document.documentElement.setAttribute("data-theme", "light");
-    }
+      function readStored() {
+        try {
+          var s = localStorage.getItem(KEY);
+          if (s === "light" || s === "dark") return s;
+        } catch (e) {}
+        return null;
+      }
+      function get() {
+        var a = document.documentElement.getAttribute("data-theme");
+        if (a === "light" || a === "dark") return a;
+        if (document.documentElement.classList.contains("theme-dark")) return "dark";
+        if (document.documentElement.classList.contains("theme-light")) return "light";
+        return readStored() || systemTheme();
+      }
+      function set(theme) {
+        if (theme !== "dark") theme = "light";
+        var root = document.documentElement;
+        root.setAttribute("data-theme", theme);
+        root.classList.remove("theme-light", "theme-dark");
+        root.classList.add("theme-" + theme);
+        try { localStorage.setItem(KEY, theme); } catch (e) {}
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute("content", theme === "dark" ? "#070707" : "#f7f3ec");
+        var btn = document.getElementById("theme-toggle");
+        if (btn) {
+          btn.setAttribute("aria-label", theme === "dark" ? "Switch to light theme" : "Switch to dark theme");
+          btn.setAttribute("title", theme === "dark" ? "Light theme" : "Dark theme");
+          btn.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+        }
+      }
+      function toggle() {
+        set(get() === "dark" ? "light" : "dark");
+        return false;
+      }
+      set(readStored() || systemTheme());
+      return { get: get, set: set, toggle: toggle };
+    })();
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css" />
-  <script src="/theme.js" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=3" />
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -51,7 +86,7 @@
       </nav>
       <div class="header-actions">
         <button type="button" class="theme-toggle" id="theme-toggle"
-          aria-label="Toggle color theme" aria-pressed="false">
+          aria-label="Toggle color theme" aria-pressed="false" onclick="return window.kohlTheme && window.kohlTheme.toggle();">
           <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
             <path d="M21 14.3A8.5 8.5 0 0 1 9.7 3 7 7 0 1 0 21 14.3z" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
