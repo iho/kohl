@@ -4,23 +4,35 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Kohl — Private cash L1</title>
-  <meta name="description" content="Kohl is a pure value-transfer blockchain with mandatory privacy: CLSAG ring signatures, stealth addresses, and confidential RingCT amounts. Fair-launch RandomX PoW. No contracts. No transparent path." />
-  <meta name="theme-color" content="#070707" />
+  <meta name="description" content="Kohl is a pure value-transfer blockchain with mandatory privacy: full-chain membership spends, stealth addresses, and confidential amounts. Fair-launch RandomX PoW. No contracts. No transparent path." />
+  <meta name="theme-color" content="#f7f3ec" />
   <link rel="canonical" href="https://kohl.network/" />
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://kohl.network/" />
   <meta property="og:title" content="Kohl — Private cash L1" />
-  <meta property="og:description" content="Mandatory privacy. Fair launch. Cash only. Built with the Polkadot SDK, modeled on Monero’s privacy design." />
+  <meta property="og:description" content="Mandatory privacy. Fair launch. Cash only. Full mature-set membership spends on a Substrate L1." />
   <meta property="og:image" content="https://kohl.network/assets/og.png" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Kohl — Private cash L1" />
   <meta name="twitter:description" content="Mandatory privacy. Fair launch. Cash only." />
   <meta name="twitter:image" content="https://kohl.network/assets/og.png" />
+  <script>
+    try {
+      var t = localStorage.getItem("kohl-theme");
+      if (t !== "light" && t !== "dark") {
+        t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+    }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
+  <script src="/theme.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -45,7 +57,18 @@
         <a href="#status">Status</a>
         <a href="#start">Start</a>
       </nav>
-      <a class="btn btn-ghost" href="https://github.com/iho/kohl" rel="noopener noreferrer">GitHub</a>
+      <div class="header-actions">
+        <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle color theme">
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+            <path d="M21 14.3A8.5 8.5 0 0 1 9.7 3 7 7 0 1 0 21 14.3z" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <a class="btn btn-ghost" href="https://github.com/iho/kohl" rel="noopener noreferrer">GitHub</a>
+      </div>
     </div>
   </header>
 
@@ -61,7 +84,7 @@
           <p class="lede">
             Kohl is a pure value-transfer chain. Privacy is mandatory at the protocol:
             no transparent balances, no smart contracts, no EVM. Value moves only as
-            confidential RingCT outputs.
+            confidential outputs under full-chain membership spends.
           </p>
           <div class="hero-actions">
             <a class="btn btn-primary" href="https://github.com/iho/kohl">View the code</a>
@@ -94,7 +117,7 @@
           <ul class="pillar-list">
             <li>
               <span class="pillar-k">Sender</span>
-              <span class="pillar-v">CLSAG rings · 16 members</span>
+              <span class="pillar-v">FCMP · full mature set</span>
             </li>
             <li>
               <span class="pillar-k">Receiver</span>
@@ -111,7 +134,8 @@
           </ul>
           <p class="panel-note">
             Not Monero-compatible. Ristretto group + domain-separated tags.
-            Addresses, seeds, and txs are Kohl-native.
+            Addresses, seeds, and txs are Kohl-native. Interim membership proofs
+            cap the mature set at 64 outputs.
           </p>
         </aside>
       </div>
@@ -124,7 +148,8 @@
           <h2>What the chain hides — and how</h2>
           <p class="section-lede">
             Every transfer is self-authenticating. There is no account balance, no nonce,
-            and no signed origin for user payments. The CLSAG <em>is</em> the authorization.
+            and no signed origin for user payments. The membership proof
+            <em>is</em> the authorization.
           </p>
         </header>
         <div class="cards three">
@@ -132,11 +157,13 @@
             <span class="card-num">01</span>
             <h3>Sender anonymity</h3>
             <p>
-              Each input is a ring of 16 outputs — 15 decoys plus the real spend.
-              CLSAG proves knowledge of one private key and a matching key image without
-              revealing which ring member was spent.
+              Each spend proves the real input is one of the <strong>full set of mature
+              outputs</strong> under a published Merkle root — not a wallet-chosen ring
+              of decoys. Wallets do not sample mixins.
             </p>
-            <p class="card-meta">Hides <strong>which</strong> past output moved</p>
+            <p class="card-meta">
+              Hides <strong>which</strong> mature output moved · interim set size ≤&nbsp;64
+            </p>
           </article>
           <article class="card">
             <span class="card-num">02</span>
@@ -166,18 +193,23 @@
       <div class="wrap">
         <header class="section-head">
           <p class="eyebrow">Design choices</p>
-          <h2>Cash only. Fair launch. Stable rules.</h2>
+          <h2>Cash only. Fair launch. Honest limits.</h2>
         </header>
         <div class="split">
           <div class="split-copy">
             <ul class="checklist">
               <li>
-                <strong>No contracts, no EVM, no assets palette.</strong>
+                <strong>No contracts, no EVM, no asset palette.</strong>
                 The runtime is deliberately small: system, timestamp, RingCT, difficulty.
               </li>
               <li>
                 <strong>Zero genesis supply.</strong>
-                Every coin is mined. RandomX PoW avoids a premine or sale for the initial stake.
+                Every coin is mined. RandomX PoW — no premine for the initial stake.
+              </li>
+              <li>
+                <strong>FCMP-only spends.</strong>
+                One production path from genesis. No dual era of fixed-size rings on
+                mainnet history.
               </li>
               <li>
                 <strong>Ristretto everywhere.</strong>
@@ -185,11 +217,14 @@
               </li>
               <li>
                 <strong>Native host crypto.</strong>
-                CLSAG and Bulletproof verification run natively so block times stay practical under WASM.
+                Membership and Bulletproof verification run natively so block times stay
+                practical under WASM.
               </li>
               <li>
-                <strong>Fees to miners.</strong>
-                Public fee with a min fee-per-byte floor; carried into the next coinbase.
+                <strong>Interim scale limit.</strong>
+                Today’s proofs are O(n) over the mature set, capped at 64. Larger trees
+                need a later log-size construction — we do not claim unlimited anonymity
+                sets yet.
               </li>
             </ul>
           </div>
@@ -197,16 +232,18 @@
             <figcaption>Transfer path</figcaption>
             <pre><code>Wallet                         Runtime (pallet-ringct)
 ─────                         ──────────────────────
-pick real output + 15 decoys
-build pseudo-commitments C'
-CLSAG + aggregated BP
+pick real output(s)
+fetch membership root
+  + leaf digests
+build C' + FCMP proof
+aggregated BP
 stealth OTKs + masked amounts
-unsigned extrinsic  ────────► shape / maturity / fee
-                              verify CLSAG (host)
+unsigned extrinsic  ────────► shape / root window / fee
+                              verify_fcmp (host)
                               ΣC' == ΣC_out + fee·H
                               verify range proof (host)
                               insert key images
-                              append outputs</code></pre>
+                              append outputs + tree</code></pre>
           </figure>
         </div>
       </div>
@@ -330,27 +367,30 @@ unsigned extrinsic  ────────► shape / maturity / fee
       <div class="wrap">
         <header class="section-head">
           <p class="eyebrow">Status</p>
-          <h2>Implemented through Phase&nbsp;4 (+ Dandelion++)</h2>
+          <h2>Pre-launch software that runs today</h2>
           <p class="section-lede">
-            Privacy crypto, monetary rules, LWMA difficulty, PoW node, wallet crate,
-            and Dandelion++ diffusion against <code>polkadot-stable2606</code>.
+            Privacy crypto, membership tree, FCMP spends, wallet builder, PoW node,
+            and Dandelion++ against <code>polkadot-stable2606</code>. Mainnet is a fair
+            launch when people choose to mine it — coordinate if you care about a
+            shared start.
           </p>
         </header>
         <div class="status-grid">
           <ul class="status-list done">
-            <li>RingCT transfer (CLSAG + balance + range proofs)</li>
+            <li>FCMP-only transfer (membership + balance + range proofs)</li>
+            <li>Path&nbsp;A membership tree + maturity via admission</li>
             <li>Stealth addresses + view tags</li>
             <li>Host-function crypto (native verify)</li>
-            <li>Runnable PoW node (<code>--dev</code>)</li>
-            <li>Wallet scan + multi-input spends</li>
-            <li>Local testnet <code>kohl-ash</code></li>
+            <li>Runnable PoW node (<code>--dev</code> / <code>kohl-ash</code> / <code>kohl</code>)</li>
+            <li>Wallet scan + multi-input FCMP spends</li>
             <li>Dandelion++ stem / fluff gossip</li>
-            <li>Fuzz targets · crypto benches · cargo-deny</li>
+            <li>Encoding freeze docs · fuzz targets · benches</li>
           </ul>
           <ul class="status-list next">
-            <li>Machine weights into production <code>WeightInfo</code></li>
-            <li>External cryptography audit</li>
+            <li>Log-size membership for trees larger than 64</li>
             <li>Production RandomX (feature-gated today)</li>
+            <li>Longer public multi-node soak on shared history</li>
+            <li>Social mainnet launch coordination</li>
           </ul>
         </div>
       </div>
@@ -400,14 +440,14 @@ MINING_SEED=&lt;64-hex&gt; \
             <h3>Docs</h3>
             <ul class="doc-links">
               <li><a href="https://github.com/iho/kohl/blob/main/docs/production-bootnode.md">Production bootnode runbook</a></li>
+              <li><a href="https://github.com/iho/kohl/blob/main/docs/fcmp-design.md">FCMP design</a></li>
               <li><a href="https://github.com/iho/kohl/blob/main/docs/tor-runbook.md">Tor runbook</a></li>
-              <li><a href="https://github.com/iho/kohl/blob/main/scripts/systemd/kohl-seed.service">systemd seed unit</a></li>
               <li><a href="https://github.com/iho/kohl/blob/main/README.md">README — quick start</a></li>
               <li><a href="https://github.com/iho/kohl/blob/main/BLUEPRINT.md">BLUEPRINT</a></li>
             </ul>
             <p class="footnote">
               Use <code>--chain kohl</code> (mainnet) or <code>kohl-ash</code> (testnet). Keep RPC on
-              localhost; miners only need P2P port 30333.
+              localhost; miners only need P2P port 30333. Software is experimental.
             </p>
           </div>
         </div>
@@ -417,7 +457,7 @@ MINING_SEED=&lt;64-hex&gt; \
     <section class="cta">
       <div class="wrap cta-inner">
         <h2>Build private money in the open.</h2>
-        <p>Source under GPL-3.0. Contributions and review welcome.</p>
+        <p>Source under GPL-3.0. Read the code; run a node; decide for yourself.</p>
         <a class="btn btn-primary" href="https://github.com/iho/kohl">github.com/iho/kohl</a>
       </div>
     </section>
@@ -426,7 +466,7 @@ MINING_SEED=&lt;64-hex&gt; \
   <footer class="site-footer">
     <div class="wrap bar">
       <p>© <span id="y"></span> Kohl · Private cash L1</p>
-      <p class="fine">Not investment advice. Software is experimental. Privacy is a protocol property — use it carefully.</p>
+      <p class="fine">Not investment advice. Software is experimental. Privacy is layered — protocol, network, and your own opsec.</p>
     </div>
   </footer>
 

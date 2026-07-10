@@ -1,6 +1,37 @@
-/* Kohl — private cash L1 */
+/* Kohl — private cash L1 · light + dark */
 
-:root {
+/* Light (default) */
+:root,
+[data-theme="light"] {
+  --bg: #f7f3ec;
+  --bg-elev: #efe9df;
+  --bg-soft: #fffdf9;
+  --line: rgba(90, 70, 48, 0.12);
+  --line-strong: rgba(90, 70, 48, 0.22);
+  --text: #1a1612;
+  --muted: #5c554c;
+  --faint: #8a8176;
+  --accent: #8f5e32;
+  --accent-dim: #a67a4a;
+  --ok: #3d7a4a;
+  --next: #9a6b2f;
+  --code-bg: #1c1814;
+  --code-fg: #e8dfd2;
+  --panel-fill: rgba(255, 255, 255, 0.72);
+  --panel-row: rgba(143, 94, 50, 0.06);
+  --header-bg: rgba(247, 243, 236, 0.82);
+  --header-border: rgba(26, 22, 18, 0.06);
+  --glow: rgba(143, 94, 50, 0.1);
+  --checklist-bg: rgba(255, 255, 255, 0.65);
+  --cta-bg: linear-gradient(180deg, #fffdf9, #efe9df);
+  --shadow: 0 20px 50px rgba(60, 40, 20, 0.08);
+  --btn-primary-fg: #fffdf9;
+  --noise-opacity: 0.035;
+  color-scheme: light;
+}
+
+/* Dark */
+[data-theme="dark"] {
   --bg: #070707;
   --bg-elev: #0e0e0e;
   --bg-soft: #121212;
@@ -13,12 +44,28 @@
   --accent-dim: #b8956e;
   --ok: #8fbc8f;
   --next: #c4a574;
+  --code-bg: #050505;
+  --code-fg: #d9cfc2;
+  --panel-fill: linear-gradient(180deg, rgba(232, 195, 154, 0.06), rgba(255, 255, 255, 0.02));
+  --panel-row: rgba(0, 0, 0, 0.28);
+  --header-bg: rgba(7, 7, 7, 0.72);
+  --header-border: rgba(255, 255, 255, 0.04);
+  --glow: rgba(232, 195, 154, 0.09);
+  --checklist-bg: rgba(0, 0, 0, 0.2);
+  --cta-bg: radial-gradient(ellipse at 50% 0%, rgba(232, 195, 154, 0.12), transparent 55%),
+    linear-gradient(180deg, #12100e, #0b0b0b);
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  --btn-primary-fg: #14110e;
+  --noise-opacity: 0.04;
+  color-scheme: dark;
+}
+
+:root {
   --serif: "Instrument Serif", "Times New Roman", serif;
   --sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --wrap: 1120px;
   --radius: 14px;
-  --shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
 }
 
 *,
@@ -48,7 +95,7 @@ body {
   position: fixed;
   inset: 0;
   z-index: 0;
-  opacity: 0.04;
+  opacity: var(--noise-opacity);
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
@@ -58,7 +105,7 @@ body {
   inset: -20% 20% auto;
   height: 55vh;
   z-index: 0;
-  background: radial-gradient(ellipse at 50% 0%, rgba(232, 195, 154, 0.09), transparent 60%);
+  background: radial-gradient(ellipse at 50% 0%, var(--glow), transparent 60%);
 }
 
 .skip {
@@ -66,7 +113,7 @@ body {
   left: -999px;
   top: 0;
   background: var(--accent);
-  color: #111;
+  color: var(--btn-primary-fg);
   padding: 0.5rem 0.75rem;
   z-index: 100;
 }
@@ -90,8 +137,8 @@ body {
   top: 0;
   z-index: 20;
   backdrop-filter: blur(14px);
-  background: rgba(7, 7, 7, 0.72);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
 }
 
 .bar {
@@ -100,6 +147,12 @@ body {
   justify-content: space-between;
   gap: 1rem;
   min-height: 64px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .brand {
@@ -135,6 +188,49 @@ body {
   color: var(--text);
 }
 
+/* Theme toggle */
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.theme-toggle:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.theme-toggle svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.theme-toggle .icon-sun {
+  display: none;
+}
+
+.theme-toggle .icon-moon {
+  display: block;
+}
+
+[data-theme="dark"] .theme-toggle .icon-sun {
+  display: block;
+}
+
+[data-theme="dark"] .theme-toggle .icon-moon {
+  display: none;
+}
+
 /* Buttons */
 
 .btn {
@@ -157,11 +253,11 @@ body {
 
 .btn-primary {
   background: var(--accent);
-  color: #14110e;
+  color: var(--btn-primary-fg);
 }
 
 .btn-primary:hover {
-  background: #f0d2ad;
+  filter: brightness(1.06);
 }
 
 .btn-secondary {
@@ -266,7 +362,7 @@ body {
 }
 
 .hero-panel {
-  background: linear-gradient(180deg, rgba(232, 195, 154, 0.06), rgba(255, 255, 255, 0.02));
+  background: var(--panel-fill);
   border: 1px solid var(--line);
   border-radius: calc(var(--radius) + 4px);
   box-shadow: var(--shadow);
@@ -291,7 +387,7 @@ body {
   height: 0.5rem;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(232, 195, 154, 0.12);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .pillar-list {
@@ -308,8 +404,8 @@ body {
   gap: 0.75rem;
   padding: 0.85rem 0.9rem;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: var(--panel-row);
+  border: 1px solid var(--line);
 }
 
 .pillar-k {
@@ -338,13 +434,13 @@ body {
 }
 
 .section-alt {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 40%),
+  background: linear-gradient(180deg, color-mix(in srgb, var(--text) 3%, transparent), transparent 40%),
     var(--bg-elev);
-  border-block: 1px solid rgba(255, 255, 255, 0.03);
+  border-block: 1px solid var(--line);
 }
 
 .section-head {
-  max-width: 40rem;
+  max-width: 42rem;
   margin-bottom: 2.25rem;
 }
 
@@ -454,7 +550,7 @@ body {
   padding: 1rem 1rem 1rem 2.6rem;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--checklist-bg);
   color: var(--muted);
 }
 
@@ -467,7 +563,7 @@ body {
   height: 0.55rem;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(232, 195, 154, 0.12);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .checklist strong {
@@ -479,7 +575,7 @@ body {
 
 .diagram {
   margin: 0;
-  background: #050505;
+  background: var(--code-bg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: auto;
@@ -488,12 +584,12 @@ body {
 
 .diagram figcaption {
   padding: 0.85rem 1.1rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-family: var(--mono);
   font-size: 0.72rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: #8a8176;
 }
 
 .diagram pre {
@@ -506,7 +602,7 @@ body {
   font-family: var(--mono);
   font-size: 0.78rem;
   line-height: 1.55;
-  color: #cfc4b6;
+  color: var(--code-fg);
   white-space: pre;
 }
 
@@ -524,7 +620,7 @@ body {
   padding: 1.15rem 1.1rem;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: linear-gradient(160deg, rgba(232, 195, 154, 0.05), transparent 55%);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 55%);
 }
 
 .metric-label {
@@ -591,11 +687,11 @@ body {
 }
 
 .status-list.done {
-  border-color: rgba(143, 188, 143, 0.18);
+  border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
 }
 
 .status-list.next {
-  border-color: rgba(196, 165, 116, 0.2);
+  border-color: color-mix(in srgb, var(--next) 40%, var(--line));
 }
 
 /* Start */
@@ -608,7 +704,7 @@ body {
 .code-block {
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #050505;
+  background: var(--code-bg);
   overflow: hidden;
   box-shadow: var(--shadow);
 }
@@ -618,18 +714,18 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 0.7rem 1rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   font-family: var(--mono);
   font-size: 0.72rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: #8a8176;
 }
 
 .copy {
   background: transparent;
-  border: 1px solid var(--line);
-  color: var(--muted);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #a89f92;
   border-radius: 999px;
   padding: 0.3rem 0.7rem;
   font: 500 0.72rem/1 var(--mono);
@@ -639,8 +735,8 @@ body {
 }
 
 .copy:hover {
-  color: var(--text);
-  border-color: var(--line-strong);
+  color: #f3eee6;
+  border-color: rgba(255, 255, 255, 0.28);
 }
 
 .code-block pre {
@@ -653,7 +749,7 @@ body {
   font-family: var(--mono);
   font-size: 0.84rem;
   line-height: 1.6;
-  color: #d9cfc2;
+  color: var(--code-fg);
 }
 
 .start-aside h3 {
@@ -676,7 +772,7 @@ body {
 }
 
 .doc-links a:hover {
-  border-bottom-color: rgba(232, 195, 154, 0.45);
+  border-bottom-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .footnote {
@@ -696,9 +792,7 @@ body {
   padding: 2.75rem 1.5rem;
   border-radius: calc(var(--radius) + 6px);
   border: 1px solid var(--line-strong);
-  background:
-    radial-gradient(ellipse at 50% 0%, rgba(232, 195, 154, 0.12), transparent 55%),
-    linear-gradient(180deg, #12100e, #0b0b0b);
+  background: var(--cta-bg);
 }
 
 .cta h2 {
@@ -716,7 +810,7 @@ body {
 /* Footer */
 
 .site-footer {
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid var(--header-border);
   padding: 1.4rem 0 2rem;
   color: var(--faint);
   font-size: 0.86rem;
@@ -822,7 +916,7 @@ body {
 }
 
 .doc-meta a:hover {
-  border-bottom: 1px solid rgba(232, 195, 154, 0.45);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .doc-body section {
@@ -852,7 +946,7 @@ body {
   padding: 0.9rem 1rem;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: rgba(232, 195, 154, 0.05);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
   color: var(--muted);
   font-size: 0.94rem;
 }
@@ -888,7 +982,7 @@ body {
 }
 
 .toc a:hover {
-  border-bottom: 1px solid rgba(232, 195, 154, 0.4);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .table-wrap {
@@ -918,7 +1012,7 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--faint);
-  background: rgba(0, 0, 0, 0.25);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 
 .doc-body td {
@@ -952,7 +1046,7 @@ body {
   border: 1px solid var(--line);
   border-radius: 10px;
   margin: 0.45rem 0;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--checklist-bg);
 }
 
 .checklist-page li::before {
@@ -982,7 +1076,7 @@ body {
 }
 
 .doc-body pre code {
-  color: #d9cfc2;
+  color: var(--code-fg);
   font-size: 0.82rem;
 }
 

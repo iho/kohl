@@ -4,12 +4,24 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Not found — Kohl</title>
-  <meta name="theme-color" content="#070707" />
+  <meta name="theme-color" content="#f7f3ec" />
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <script>
+    try {
+      var t = localStorage.getItem("kohl-theme");
+      if (t !== "light" && t !== "dark") {
+        t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {
+      document.documentElement.setAttribute("data-theme", "light");
+    }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
+  <script src="/theme.js" defer></script>
   <style>
     .notfound {
       min-height: calc(100vh - 8rem);
