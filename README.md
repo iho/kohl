@@ -304,7 +304,8 @@ Details: [BLUEPRINT.md §3.4](BLUEPRINT.md) and `pallets/ringct/src/lib.rs`
 | [docs/fcmp-audit-hardening.md](docs/fcmp-audit-hardening.md) | PR-11 hardening, fuzz, residual audit risks |
 | [scripts/systemd/](scripts/systemd/) | systemd units for seed & miner |
 | [chainspecs/](chainspecs/) | Exported chain specs with bootnodes |
-| [examples/learn_ringct.py](examples/learn_ringct.py) | Runnable privacy walkthrough |
+| [examples/learn_fcmp.py](examples/learn_fcmp.py) | **How Kohl works today** (FCMP tree + spend, toy) |
+| [examples/learn_ringct.py](examples/learn_ringct.py) | Older ring-signature algebra tour |
 | [plan.md](plan.md) | Original design brief (historical requirements) |
 
 ---
