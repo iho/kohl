@@ -1,8 +1,9 @@
 //! Minimal JSON-RPC client for talking to a kohl node: runtime-API calls via
 //! `state_call`, and extrinsic submission via `author_submitExtrinsic`.
 
-use crate::StoredOut;
+use crate::{MembershipSnapshot, StoredOut};
 use codec::{Decode, Encode};
+use ringct_crypto::fcmp::empty_leaf_hash;
 use serde_json::json;
 use std::error::Error;
 
@@ -99,4 +100,106 @@ impl RpcClient {
         let result = self.call("author_submitExtrinsic", json!([hex_xt]))?;
         Ok(result.as_str().unwrap_or_default().to_string())
     }
+
+    pub fn membership_root(&self) -> R<[u8; 32]> {
+        if let Ok(v) = self.call("ringct_membershipRoot", json!([])) {
+            if let Some(s) = v.as_str() {
+                return parse_hex32(s);
+            }
+        }
+        let bytes = self.runtime_call("RingCtApi_membership_root", &[])?;
+        Ok(<[u8; 32]>::decode(&mut &bytes[..])?)
+    }
+
+    pub fn tree_slots(&self) -> R<u64> {
+        if let Ok(v) = self.call("ringct_treeSlots", json!([])) {
+            if let Some(n) = v.as_u64() {
+                return Ok(n);
+            }
+        }
+        let bytes = self.runtime_call("RingCtApi_tree_slots", &[])?;
+        Ok(u64::decode(&mut &bytes[..])?)
+    }
+
+    pub fn is_admitted(&self, index: u64) -> R<bool> {
+        if let Ok(v) = self.call("ringct_isAdmitted", json!([index])) {
+            if let Some(b) = v.as_bool() {
+                return Ok(b);
+            }
+        }
+        let bytes = self.runtime_call("RingCtApi_is_admitted", &index.encode())?;
+        Ok(bool::decode(&mut &bytes[..])?)
+    }
+
+    pub fn membership_leaf_digest(&self, index: u64) -> R<Option<[u8; 32]>> {
+        if let Ok(v) = self.call("ringct_membershipLeafDigest", json!([index])) {
+            if v.is_null() {
+                return Ok(None);
+            }
+            if let Some(s) = v.as_str() {
+                return Ok(Some(parse_hex32(s)?));
+            }
+        }
+        let bytes = self.runtime_call("RingCtApi_membership_leaf_digest", &index.encode())?;
+        Ok(Option::<[u8; 32]>::decode(&mut &bytes[..])?)
+    }
+
+    /// SCALE frontier: `Vec<[u8;32]>` digests for `0..tree_slots`.
+    pub fn membership_frontier(&self) -> R<Vec<[u8; 32]>> {
+        if let Ok(v) = self.call("ringct_membershipFrontier", json!([])) {
+            if let Some(s) = v.as_str() {
+                let bytes = hex::decode(s.trim_start_matches("0x"))?;
+                return Ok(Decode::decode(&mut &bytes[..])?);
+            }
+        }
+        let bytes = self.runtime_call("RingCtApi_membership_frontier", &[])?;
+        Ok(Decode::decode(&mut &bytes[..])?)
+    }
+
+    /// Build a prove-time membership snapshot (prefers frontier RPC).
+    pub fn membership_snapshot(&self, all_outputs: &[(u64, StoredOut)]) -> R<MembershipSnapshot> {
+        let root = self.membership_root()?;
+        let slots = self.tree_slots()?;
+        let digests = match self.membership_frontier() {
+            Ok(d) if d.len() as u64 == slots => d,
+            _ => {
+                // Fallback: one digest RPC per slot.
+                let empty = empty_leaf_hash();
+                let mut digests = Vec::with_capacity(slots as usize);
+                for i in 0..slots {
+                    digests.push(self.membership_leaf_digest(i)?.unwrap_or(empty));
+                }
+                digests
+            }
+        };
+        crate::snapshot_from_frontier(root, digests, all_outputs).map_err(|e| e.to_string().into())
+    }
+
+    /// Refresh a cache against the live tip; clears and rebuilds on reorg/stale.
+    pub fn refresh_membership_cache(
+        &self,
+        cache: &mut crate::MembershipCache,
+        all_outputs: &[(u64, StoredOut)],
+    ) -> R<MembershipSnapshot> {
+        let tip = self.best_number()?;
+        let root = self.membership_root()?;
+        let slots = self.tree_slots()?;
+        if cache.resync_if_reorged(tip, &root, slots) || cache.snapshot().is_none() {
+            let snap = self.membership_snapshot(all_outputs)?;
+            let by_index: std::collections::BTreeMap<u64, &StoredOut> =
+                all_outputs.iter().map(|(i, o)| (*i, o)).collect();
+            cache.rebuild(tip, snap.root, snap.digests, &by_index)?;
+        }
+        Ok(cache.snapshot().expect("populated").clone())
+    }
+}
+
+fn parse_hex32(s: &str) -> R<[u8; 32]> {
+    let bytes = hex::decode(s.trim().trim_start_matches("0x"))?;
+    if bytes.len() != 32 {
+        return Err(format!("expected 32 bytes, got {}", bytes.len()).into());
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
 }

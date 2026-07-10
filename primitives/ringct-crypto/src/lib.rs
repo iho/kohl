@@ -134,7 +134,7 @@ pub mod native {
 
     /// True iff `bytes` is a canonical compressed Ristretto point that is
     /// **not** the identity. Used to reject garbage one-time keys at mint time
-    /// so they cannot poison future rings as decoys.
+    /// so they cannot poison the membership tree / mature set.
     pub fn is_valid_point(bytes: &[u8; 32]) -> bool {
         let Ok(c) = CompressedRistretto::from_slice(bytes) else {
             return false;
@@ -369,6 +369,71 @@ pub trait RingctCrypto {
             sk.copy_from_slice(secret);
         }
         clsag::key_image(&sk).unwrap_or([0u8; 32])
+    }
+
+    /// Host-only aggregated range proof: SCALE `(values: Vec<u64>, blindings: Vec<[u8;32]>)`
+    /// → SCALE `(proof: Vec<u8>, commitments: Vec<[u8;32]>)` or empty.
+    fn prove_range_v1(
+        args: PassFatPointerAndRead<&[u8]>,
+    ) -> AllocateAndReturnByCodec<alloc::vec::Vec<u8>> {
+        use codec::{Decode, Encode};
+        let Ok((values, blindings)) =
+            <(alloc::vec::Vec<u64>, alloc::vec::Vec<[u8; 32]>)>::decode(&mut &args[..])
+        else {
+            return alloc::vec::Vec::new();
+        };
+        let Some((proof, commits)) = native::prove_range(&values, &blindings) else {
+            return alloc::vec::Vec::new();
+        };
+        (proof, commits).encode()
+    }
+
+    /// Host-only FCMP0001 prove for benchmarks/tests.
+    ///
+    /// SCALE input: `(msg: [u8;32], digests: Vec<[u8;32]>,
+    ///   admitted: Vec<(tree_index:u64, P:[u8;32], C:[u8;32])>,
+    ///   real_index: u32, secret: [u8;32], in_blinding: [u8;32],
+    ///   pseudo_blinding: [u8;32])`
+    ///
+    /// Returns SCALE `(proof, key_image, pseudo_commitment)` or empty on failure.
+    fn fcmp_prove_v1(
+        args: PassFatPointerAndRead<&[u8]>,
+    ) -> AllocateAndReturnByCodec<alloc::vec::Vec<u8>> {
+        use codec::{Decode, Encode};
+        type Args = (
+            [u8; 32],
+            alloc::vec::Vec<[u8; 32]>,
+            alloc::vec::Vec<(u64, [u8; 32], [u8; 32])>,
+            u32,
+            [u8; 32],
+            [u8; 32],
+            [u8; 32],
+        );
+        let Ok((msg, digests, admitted_raw, real_index, secret, in_b, pb)) =
+            Args::decode(&mut &args[..])
+        else {
+            return alloc::vec::Vec::new();
+        };
+        let admitted = admitted_raw
+            .into_iter()
+            .map(|(tree_index, one_time_key, commitment)| fcmp::RingMember {
+                tree_index,
+                one_time_key,
+                commitment,
+            })
+            .collect();
+        let witness = fcmp::ProveWitness {
+            digests,
+            admitted,
+            real_index: real_index as usize,
+            secret_key: secret,
+            input_blinding: in_b,
+            pseudo_blinding: pb,
+        };
+        let Some(res) = fcmp::prove(&msg, &witness) else {
+            return alloc::vec::Vec::new();
+        };
+        (res.proof, res.key_image, res.pseudo_commitment).encode()
     }
 
     /// Host-only: build a complete 1-in/1-out transfer for benchmarks.

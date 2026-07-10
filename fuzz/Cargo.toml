@@ -4,6 +4,9 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
+# Standalone package for cargo-fuzz (not a workspace member).
+[workspace]
+
 [package.metadata]
 cargo-fuzz = true
 
@@ -24,6 +27,13 @@ bench = false
 [[bin]]
 name = "transfer_decode"
 path = "fuzz_targets/transfer_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fcmp_verify"
+path = "fuzz_targets/fcmp_verify.rs"
 test = false
 doc = false
 bench = false

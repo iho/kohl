@@ -1,33 +1,17 @@
 //! # pallet-ringct — the kohl monetary system
 //!
-//! **Phase 3 (current): full RingCT.** All three Monero privacy pillars are
-//! active (BLUEPRINT.md §1.3):
+//! **PR-7: FCMP-only spends.** Mandatory privacy (BLUEPRINT.md §1.3):
 //!
-//! 1. **Sender anonymity** — every input is a ring of `T::RingSize` outputs
-//!    (decoys + 1 real) proven by a CLSAG; the chain learns only the ring.
-//! 2. **Receiver privacy** — outputs are one-time stealth keys with view
-//!    tags; addresses never appear on chain (derivation is wallet-side, see
-//!    `ringct_crypto::stealth`).
-//! 3. **Amount confidentiality** — Pedersen commitments + one aggregated
-//!    Bulletproof per tx; per-input *pseudo-output commitments* re-blind the
-//!    real input amounts so the balance equation
-//!    `Σ C_pseudo == Σ C_out + fee·H` verifies without linking ring members.
+//! 1. **Sender anonymity** — full mature-set membership under the Path A
+//!    Merkle root (`FCMP0001` + CLSAG SA+L; see `ringct_crypto::fcmp`).
+//! 2. **Receiver privacy** — one-time stealth keys + view tags.
+//! 3. **Amount confidentiality** — Pedersen commitments + Bulletproofs;
+//!    balance `Σ C_pseudo == Σ C_out + fee·H`.
 //!
-//! Double spends are prevented by **key images** (`I = x·Hp(P)`): stored
-//! forever, deterministic per output, revealing nothing about which ring
-//! member was spent. Transfers are unsigned self-authenticating extrinsics;
-//! the fee is the single public amount and goes to the block author via the
-//! coinbase inherent. Heavy verification (CLSAG, Bulletproofs, balance) runs
-//! natively through versioned host functions (BLUEPRINT.md §1.6).
-//!
-//! **Membership tree scaffolding (PR-1/PR-2):** a Path A blake2 sparse Merkle
-//! tree is maintained over global output indices (EMPTY until mature, then
-//! `L(P,C)`). PR-2 adds lag-mode catch-up polish (`AdmitScanCursor`, multi-block
-//! grow/fill, status helpers). Spents remain CLSAG until FCMP-only.
-//!
-//! **PR-6 weights:** [`weights::WeightInfo`] includes `transfer_fcmp` /
-//! `authorize_fcmp` / `maintain_membership` budgets for the interim `FCMP0001`
-//! path (wired in PR-7).
+//! Double spends: permanent **key images**. Transfers are unsigned
+//! self-authenticating extrinsics (`AuthorizeCall`). Membership tree
+//! (PR-1/2) admits mature leaves; maturity is implied by non-EMPTY membership.
+//! Host verify: `verify_fcmp_v1` (PR-4/5). Weights: `transfer_fcmp` (PR-6).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -38,9 +22,9 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::{pallet_prelude::*, BoundedVec};
 use frame_system::pallet_prelude::*;
 use ringct_primitives::{
-    block_reward, CLSAG_MAX_BYTES, FCMP_ADMIT_MAX_LEAVES_PER_BLOCK,
-    FCMP_GROW_CATCHUP_MAX_PER_BLOCK, FCMP_ROOT_MAX_AGE_BLOCKS, MAX_INPUTS, MAX_OUTPUTS,
-    MAX_PAYLOAD_BYTES, MAX_RANGE_PROOF_BYTES, MAX_RING_SIZE,
+    block_reward, FCMP_ADMIT_MAX_LEAVES_PER_BLOCK, FCMP_GROW_CATCHUP_MAX_PER_BLOCK,
+    FCMP_ROOT_MAX_AGE_BLOCKS, MAX_FCMP_ANON_SET, MAX_FCMP_INPUTS, MAX_FCMP_PROOF_BYTES,
+    MAX_OUTPUTS, MAX_PAYLOAD_BYTES, MAX_RANGE_PROOF_BYTES,
 };
 use scale_info::TypeInfo;
 use sp_runtime::transaction_validity::{InvalidTransaction, ValidTransaction};
@@ -50,22 +34,27 @@ pub mod membership;
 pub mod weights;
 pub use weights::WeightInfo;
 
-/// Dev / Building: tree maintained, spends still CLSAG (current mainnet code path).
+/// Legacy mode constant (tree + CLSAG); no longer returned by [`Pallet::fcmp_mode`].
 pub const FCMP_MODE_BUILDING: u8 = 1;
-/// Production target: FCMP-only spends (not enabled yet).
+/// Production: FCMP-only spends (PR-7).
 pub const FCMP_MODE_FCMP_ONLY: u8 = 2;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
 
 #[cfg(test)]
+mod mainnet_invariants;
+#[cfg(test)]
 mod mock;
 #[cfg(test)]
 mod tests;
 
-/// Domain-separation prefix for the transfer signing hash. Versioned:
-/// changing tx semantics MUST change this string (consensus-critical).
-pub const SIGNING_DOMAIN: [u8; 16] = *b"kohl/transfer/v3";
+/// Domain-separation prefix for the FCMP transfer signing hash (v4).
+/// Changing tx semantics MUST change this string (consensus-critical).
+pub const SIGNING_DOMAIN: [u8; 16] = *b"kohl/transfer/v4";
+
+/// Alias matching design doc name.
+pub const FCMP_SIGNING_DOMAIN: [u8; 16] = SIGNING_DOMAIN;
 
 /// Inherent identifier for the coinbase call.
 pub const INHERENT_IDENTIFIER: sp_inherents::InherentIdentifier = *b"ringct0b";
@@ -79,22 +68,18 @@ pub type Payload = BoundedVec<u8, ConstU32<MAX_PAYLOAD_BYTES>>;
 /// computed by the runtime, not the miner (see `ProvideInherent::create_inherent`).
 pub type CoinbaseInherent = ([u8; 32], [u8; 32], u8);
 
-/// The message every CLSAG in a transfer signs: a hash binding the rings,
-/// key images, pseudo-commitments, all outputs, the tx pubkey and the fee —
-/// everything except the signatures themselves (and the range proof, which
-/// its own transcript binds to the commitments).
+/// The message every FCMP input proves against: binds membership root, key
+/// images, pseudo-commitments, outputs, tx pubkey and fee — not the proof
+/// blobs or range proof (those bind via their own transcripts).
 ///
-/// A free function (not a pallet method) so wallets can build and sign
-/// transactions without a runtime.
+/// Free function so wallets can build/sign without a runtime.
 pub fn signing_hash(tx: &TransferTx) -> [u8; 32] {
-    let rings: Vec<&BoundedVec<u64, ConstU32<MAX_RING_SIZE>>> =
-        tx.inputs.iter().map(|i| &i.ring).collect();
     let key_images: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.key_image).collect();
     let pseudos: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.pseudo_commitment).collect();
     sp_io::hashing::blake2_256(
         &(
             SIGNING_DOMAIN,
-            rings,
+            tx.membership_root,
             key_images,
             pseudos,
             &tx.outputs,
@@ -156,38 +141,35 @@ pub struct StoredOutput<BlockNumber> {
     pub coinbase: bool,
 }
 
-/// One ring spend inside a transfer.
+/// One FCMP spend inside a transfer.
 #[derive(
     Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
-pub struct RingInput {
-    /// Global output indices of the ring members (strictly increasing;
-    /// exactly `T::RingSize` of them — one is the real spend, the chain
-    /// cannot tell which).
-    pub ring: BoundedVec<u64, ConstU32<MAX_RING_SIZE>>,
+pub struct FcmpInput {
     /// Key image `I = x·Hp(P)` — the permanent nullifier.
     pub key_image: [u8; 32],
     /// Pseudo-output commitment `C'`: same amount as the real input under a
     /// fresh blinding; feeds the tx balance equation.
     pub pseudo_commitment: [u8; 32],
-    /// CLSAG signature: `c0 ‖ s_0..s_{n−1} ‖ D`.
-    pub clsag: BoundedVec<u8, ConstU32<CLSAG_MAX_BYTES>>,
+    /// `FCMP0001` proof blob (membership + SA+L).
+    pub fcmp_proof: BoundedVec<u8, ConstU32<MAX_FCMP_PROOF_BYTES>>,
 }
 
-/// A complete RingCT transfer, submitted as an *unsigned* extrinsic: like a
-/// Monero transaction it is self-authenticating — the CLSAGs are the
-/// authorization; there is no account, no signer, no nonce.
+/// Deprecated name: production inputs are [`FcmpInput`] (no ring indices).
+pub type RingInput = FcmpInput;
+
+/// A complete FCMP transfer: unsigned self-authenticating extrinsic.
 #[derive(
     Clone, PartialEq, Eq, Debug, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
 pub struct TransferTx {
-    pub inputs: BoundedVec<RingInput, ConstU32<MAX_INPUTS>>,
+    /// Single membership root anchor for all inputs (D13).
+    pub membership_root: [u8; 32],
+    pub inputs: BoundedVec<FcmpInput, ConstU32<MAX_FCMP_INPUTS>>,
     pub outputs: BoundedVec<Output, ConstU32<MAX_OUTPUTS>>,
     /// Per-tx pubkey `R = r·G` for stealth derivation.
     pub tx_pubkey: [u8; 32],
     /// One aggregated Bulletproof covering all output commitments.
-    /// Not part of the signed message: it is already bound to the
-    /// commitments by its transcript.
     pub range_proof: BoundedVec<u8, ConstU32<MAX_RANGE_PROOF_BYTES>>,
     /// The one public amount. Consensus: Σ C_pseudo == Σ C_out + fee·H.
     pub fee: u64,
@@ -206,16 +188,11 @@ pub mod pallet {
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
-        /// Exact required ring size (production: 16). Must be ≤ MAX_RING_SIZE.
-        #[pallet::constant]
-        type RingSize: Get<u32>;
-
-        /// Blocks before an output may be spent *or used as a decoy*
-        /// (reorg safety + ring quality).
+        /// Blocks before a non-coinbase output may be admitted (tree fill).
         #[pallet::constant]
         type SpendableAge: Get<BlockNumberFor<Self>>;
 
-        /// Blocks before a coinbase output may be spent or used as a decoy.
+        /// Blocks before a coinbase output may be admitted (tree fill).
         #[pallet::constant]
         type CoinbaseMaturity: Get<BlockNumberFor<Self>>;
 
@@ -343,20 +320,20 @@ pub mod pallet {
         /// Inputs must be strictly ordered by key image (canonical form,
         /// also rules out duplicate key images inside one tx).
         InputsNotSortedUnique,
-        /// A ring does not have exactly `T::RingSize` members.
-        RingSizeInvalid,
-        /// Ring indices must be strictly increasing (sorted, no duplicates).
-        RingIndicesInvalid,
-        /// A ring member does not exist.
-        UnknownOutput,
-        /// A ring member has not reached spendable age / maturity.
-        OutputImmature,
         /// This key image has already been spent.
         KeyImageAlreadySpent,
-        /// One-time key or tx pubkey is not a valid non-identity Ristretto point.
+        /// One-time key, tx pubkey, or key image is not a valid non-identity Ristretto point.
         InvalidPoint,
-        /// The CLSAG did not verify.
-        ClsagInvalid,
+        /// FCMP+SA+L proof failed verification.
+        FcmpInvalid,
+        /// Membership root is outside the accepted window.
+        RootStale,
+        /// FCMP proof exceeds `MAX_FCMP_PROOF_BYTES`.
+        FcmpProofTooLarge,
+        /// Too many FCMP inputs (> `MAX_FCMP_INPUTS`).
+        TooManyInputs,
+        /// Tree too large for interim FCMP0001 (`MAX_FCMP_ANON_SET`).
+        TreeTooLargeForFcmp,
         /// Σ C_pseudo != Σ C_out + fee·H (or a commitment failed to decode).
         BalanceCheckFailed,
         /// The aggregated range proof did not verify.
@@ -404,22 +381,21 @@ pub mod pallet {
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
-        /// The only user-facing operation on this chain: a RingCT transfer.
-        /// Self-authorizing via [`pallet::authorize`] — the CLSAG *is* the
-        /// proof; there is no account signature. Requires
-        /// `frame_system::AuthorizeCall` in the runtime's tx extensions.
+        /// The only user-facing operation: an FCMP confidential transfer.
+        /// Self-authorizing via [`pallet::authorize`] — the FCMP proofs *are*
+        /// the authorization. Requires `frame_system::AuthorizeCall`.
         #[pallet::call_index(0)]
         #[pallet::weight({
-            let w = T::WeightInfo::transfer(
+            let slots = TreeSlots::<T>::get().min(MAX_FCMP_ANON_SET as u64) as u32;
+            let w = T::WeightInfo::transfer_fcmp(
                 tx.inputs.len() as u32,
                 tx.outputs.len() as u32,
-                T::RingSize::get(),
+                slots,
             );
             (w, DispatchClass::Normal, Pays::No)
         })]
-        #[pallet::weight_of_authorize(T::WeightInfo::authorize_transfer(tx.inputs.len() as u32))]
+        #[pallet::weight_of_authorize(T::WeightInfo::authorize_fcmp(tx.inputs.len() as u32))]
         #[pallet::authorize(|source, tx: &TransferTx| -> TransactionValidityWithRefund {
-            // Pool + block inclusion both allowed; full crypto at dispatch.
             let _ = source;
             Self::authorize_transfer(tx).map(|v| (v, Weight::zero()))
         })]
@@ -555,13 +531,13 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
-        /// The message every CLSAG signs (see the free [`signing_hash`]).
+        /// The message every FCMP input proves (see free [`signing_hash`]).
         pub fn signing_hash(tx: &TransferTx) -> [u8; 32] {
             super::signing_hash(tx)
         }
 
         /// Cheap pool-side checks for `#[pallet::authorize]` on `transfer`.
-        /// Full CLSAG / balance / range proof run at dispatch.
+        /// Full FCMP / balance / range proof run at dispatch.
         pub fn authorize_transfer(
             tx: &TransferTx,
         ) -> Result<ValidTransaction, sp_runtime::transaction_validity::TransactionValidityError>
@@ -573,33 +549,44 @@ pub mod pallet {
             if tx.inputs.is_empty() || tx.outputs.is_empty() {
                 return Err(InvalidTransaction::BadProof.into());
             }
+            if tx.inputs.len() as u32 > MAX_FCMP_INPUTS {
+                return Err(InvalidTransaction::BadProof.into());
+            }
             for input in &tx.inputs {
+                if input.fcmp_proof.len() as u32 > MAX_FCMP_PROOF_BYTES {
+                    return Err(InvalidTransaction::BadProof.into());
+                }
                 if KeyImages::<T>::contains_key(input.key_image) {
                     return Err(InvalidTransaction::Stale.into());
                 }
             }
+            // Best-effort root window (full check at dispatch).
+            if !Self::membership_root_accepted(&tx.membership_root) {
+                return Err(InvalidTransaction::Stale.into());
+            }
             Ok(ValidTransaction {
                 priority: tx.fee / encoded_len.max(1),
                 requires: Vec::new(),
-                // One tag per key image: the pool auto-rejects conflicting
-                // spends of the same output and keeps the higher-priority tx.
                 provides: tx
                     .inputs
                     .iter()
                     .map(|i| (b"kohl/ki", i.key_image).encode())
                     .collect(),
-                longevity: 64,
+                longevity: FCMP_ROOT_MAX_AGE_BLOCKS as u64,
                 propagate: true,
             })
         }
 
-        /// Full consensus verification of a transfer (BLUEPRINT.md §3.4).
+        /// Full consensus verification of an FCMP transfer.
         fn verify_transfer(tx: &TransferTx) -> DispatchResult {
             ensure!(
                 !tx.inputs.is_empty() && !tx.outputs.is_empty(),
                 Error::<T>::EmptyInputsOrOutputs
             );
-            // Canonical input order by key image ⇒ no in-tx duplicates.
+            ensure!(
+                (tx.inputs.len() as u32) <= MAX_FCMP_INPUTS,
+                Error::<T>::TooManyInputs
+            );
             ensure!(
                 tx.inputs
                     .windows(2)
@@ -610,7 +597,6 @@ pub mod pallet {
                 tx.fee >= T::MinFeePerByte::get().saturating_mul(tx.encoded_size() as u64),
                 Error::<T>::FeeTooLow
             );
-            // Point hygiene before expensive host crypto.
             ensure!(
                 crypto_host::is_valid_point_v1(&tx.tx_pubkey),
                 Error::<T>::InvalidPoint
@@ -622,47 +608,46 @@ pub mod pallet {
                 );
             }
 
-            let now = frame_system::Pallet::<T>::block_number();
-            let ring_size = T::RingSize::get() as usize;
-            let msg = Self::signing_hash(tx);
+            // Interim FCMP0001 cannot encode trees larger than the anon-set cap.
+            let slots = TreeSlots::<T>::get();
+            ensure!(
+                slots <= MAX_FCMP_ANON_SET as u64,
+                Error::<T>::TreeTooLargeForFcmp
+            );
 
+            ensure!(
+                Self::membership_root_accepted(&tx.membership_root),
+                Error::<T>::RootStale
+            );
+
+            let msg = Self::signing_hash(tx);
             let mut pseudo_commitments = Vec::with_capacity(tx.inputs.len() * 32);
             for input in &tx.inputs {
-                ensure!(input.ring.len() == ring_size, Error::<T>::RingSizeInvalid);
                 ensure!(
-                    input.ring.windows(2).all(|w| w[0] < w[1]),
-                    Error::<T>::RingIndicesInvalid
+                    (input.fcmp_proof.len() as u32) <= MAX_FCMP_PROOF_BYTES,
+                    Error::<T>::FcmpProofTooLarge
                 );
                 ensure!(
                     !KeyImages::<T>::contains_key(input.key_image),
                     Error::<T>::KeyImageAlreadySpent
                 );
-
-                // Assemble the ring blob; every member (decoys included)
-                // must exist and be mature — a ring is only as private as
-                // its weakest member.
-                let mut ring_blob = Vec::with_capacity(ring_size * 64);
-                for index in &input.ring {
-                    let member = Outputs::<T>::get(index).ok_or(Error::<T>::UnknownOutput)?;
-                    let age = if member.coinbase {
-                        T::CoinbaseMaturity::get()
-                    } else {
-                        T::SpendableAge::get()
-                    };
-                    ensure!(now >= member.height + age, Error::<T>::OutputImmature);
-                    ring_blob.extend_from_slice(&member.one_time_key);
-                    ring_blob.extend_from_slice(&member.commitment);
-                }
-
                 ensure!(
-                    crypto_host::verify_clsag_v1(
+                    crypto_host::is_valid_point_v1(&input.key_image),
+                    Error::<T>::InvalidPoint
+                );
+                ensure!(
+                    crypto_host::is_valid_point_v1(&input.pseudo_commitment),
+                    Error::<T>::InvalidPoint
+                );
+                ensure!(
+                    crypto_host::verify_fcmp_v1(
                         &msg,
-                        &ring_blob,
+                        &tx.membership_root,
                         &input.pseudo_commitment,
                         &input.key_image,
-                        &input.clsag,
+                        &input.fcmp_proof,
                     ),
-                    Error::<T>::ClsagInvalid
+                    Error::<T>::FcmpInvalid
                 );
                 pseudo_commitments.extend_from_slice(&input.pseudo_commitment);
             }
@@ -671,18 +656,37 @@ pub mod pallet {
             for out in &tx.outputs {
                 output_commitments.extend_from_slice(&out.commitment);
             }
-
-            // Balance equation: Σ C_pseudo == Σ C_out + fee·H.
             ensure!(
                 crypto_host::verify_balance_v1(&pseudo_commitments, &output_commitments, tx.fee),
                 Error::<T>::BalanceCheckFailed
             );
-            // Every output amount ∈ [0, 2^64): no negative-amount minting.
             ensure!(
                 crypto_host::verify_range_proof_v1(&tx.range_proof, &output_commitments),
                 Error::<T>::RangeProofInvalid
             );
             Ok(())
+        }
+
+        /// True if `root` is the live membership root or appears in
+        /// `MembershipRootAt` within the age window.
+        pub(crate) fn membership_root_accepted(root: &[u8; 32]) -> bool {
+            use sp_runtime::traits::{One, Saturating};
+            if MembershipRoot::<T>::get() == *root {
+                return true;
+            }
+            let tip = frame_system::Pallet::<T>::block_number();
+            let max_age = BlockNumberFor::<T>::from(FCMP_ROOT_MAX_AGE_BLOCKS);
+            let mut h = tip.saturating_sub(max_age);
+            loop {
+                if MembershipRootAt::<T>::get(h).as_ref() == Some(root) {
+                    return true;
+                }
+                if h >= tip {
+                    break;
+                }
+                h = h.saturating_add(One::one());
+            }
+            false
         }
 
         /// State changes — only reached after every check passed.
@@ -903,9 +907,9 @@ pub mod pallet {
             leaves.encode()
         }
 
-        /// Spend-path mode. Currently always [`FCMP_MODE_BUILDING`].
+        /// Spend-path mode: always [`FCMP_MODE_FCMP_ONLY`] after PR-7.
         pub fn fcmp_mode() -> u8 {
-            FCMP_MODE_BUILDING
+            FCMP_MODE_FCMP_ONLY
         }
     }
 }

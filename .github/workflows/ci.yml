@@ -38,8 +38,18 @@ jobs:
           cargo test -p kohl-pow --features node
           cargo test -p kohl-wallet
 
+      # PR-10: mainnet encoding freeze + D14 invariant suite (explicit filters)
+      - name: Mainnet freeze invariants (PR-10)
+        run: |
+          cargo test -p ringct-primitives freeze
+          cargo test -p pallet-ringct mainnet_invariants
+          cargo test -p pallet-ringct machine_merge
+
       - name: Build node + runtime
         run: cargo build -p kohl-node -p kohl-runtime
+
+      - name: Node host capability tests (PR-9)
+        run: cargo test -p kohl-node --bin kohl fcmp_capability
 
       - name: Learn-script smoke
         run: python3 examples/learn_ringct.py --check

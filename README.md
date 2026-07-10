@@ -10,7 +10,7 @@ confidential RingCT outputs.
 
 | Pillar | Hides | Mechanism |
 |--------|--------|-----------|
-| Sender anonymity | *which* past output was spent | **CLSAG** ring signatures + decoys |
+| Sender anonymity | *which* past output was spent | **FCMP** full mature-set membership (`FCMP0001`, interim n≤64) |
 | Receiver privacy | *who* was paid | CryptoNote **stealth** / one-time addresses |
 | Amount confidentiality | *how much* moved | **Pedersen** commitments + **Bulletproofs** |
 
@@ -31,20 +31,22 @@ A single-node dev chain can mine and mint coinbase outputs.
 
 | Area | State |
 |------|--------|
-| RingCT transfer (CLSAG + balance + range proofs) | Done |
+| FCMP transfer (`verify_fcmp_v1` + balance + BP) | Done (FCMP0001, n≤64) |
+| Membership tree (Path A sparse Merkle) | Done |
 | Stealth addresses + view tags | Done |
 | Host-function crypto (native verify) | Done |
 | Runnable PoW node (`--dev`) | Done |
 | Epoch-rotating PoW seed (lagged block hash) | Done (importer + miner) |
 | Persistent miner address (`--mining-seed`) | Done |
-| Wallet age-biased decoy sampler | Done |
+| Wallet FCMP builder + membership cache | Done (decoy sampler `legacy-decoy` only) |
 | `#[pallet::authorize]` (no ValidateUnsigned) | Done |
 | Production RandomX hasher (vs BLAKE2b dev) | Feature-gated (`cargo build -p kohl-node --features randomx`) |
-| WeightInfo (engineered, host-crypto scaled) | Done — replace with machine benches later |
-| One-time key point hygiene | Done |
+| WeightInfo (FCMP + machine merge) | Done |
+| Mainnet encoding freeze (PR-10) | Done — `docs/fcmp-mainnet-freeze.md` |
+| Audit hardening + FCMP fuzz (PR-11) | Done (external audit still recommended) |
 | Multi-input wallet spends | Done |
 | Local testnet `kohl-ash` | Done |
-| Fuzz targets (CLSAG / transfer decode) | Done (`fuzz/`) |
+| Fuzz targets (FCMP / CLSAG / transfer decode) | Done (`fuzz/`) |
 | Coinbase view tags (wallet scan parity) | Done |
 | `ringct_*` JSON-RPC for wallets | Done |
 | Criterion crypto benches | Done (`cargo bench -p ringct-crypto`) |
@@ -62,15 +64,16 @@ tokenomics, and the full remaining-work list.
 ```text
 primitives/
   ringct-primitives/   Consensus constants, emission curve
-  ringct-crypto/       CLSAG, stealth, Pedersen, Bulletproofs, host fns
-  kohl-runtime-api/    DifficultyApi + RingCtApi
+  ringct-crypto/       FCMP0001, CLSAG SA+L, stealth, Pedersen, BP, host fns
+  kohl-runtime-api/    DifficultyApi + RingCtApi (membership)
 pallets/
-  ringct/              Monetary system (outputs, key images, transfers, coinbase)
+  ringct/              Monetary system (outputs, KI, FCMP transfers, tree, coinbase)
   difficulty/          LWMA PoW difficulty
 consensus/kohl-pow/    Mining core + sc-consensus-pow algorithm
 runtime/               FRAME runtime wiring
-node/                  Runnable binary: kohl
-wallet/                Scan + build RingCT transfers
+node/                  Runnable binary: kohl (host capability matrix)
+wallet/                Scan + build FCMP transfers
+docs/fcmp-*.md         FCMP design, freeze, runbook, hardening
 examples/learn_ringct.py   Interactive Monero/kohl privacy tour (Python)
 ```
 
@@ -293,6 +296,12 @@ Details: [BLUEPRINT.md §3.4](BLUEPRINT.md) and `pallets/ringct/src/lib.rs`
 | [GLOSSARY.md](GLOSSARY.md) | Terms & acronyms with explanations and examples |
 | [docs/tor-runbook.md](docs/tor-runbook.md) | Run Kohl over Tor (outbound, onion, wallet RPC) |
 | [docs/production-bootnode.md](docs/production-bootnode.md) | Public seed / bootnode so miners can connect |
+| [docs/fcmp-design.md](docs/fcmp-design.md) | Full-chain membership design (pre-launch FCMP-only) |
+| [docs/fcmp-runbook.md](docs/fcmp-runbook.md) | FCMP host skew matrix, genesis checklist, no Dual |
+| [docs/fcmp-mainnet-freeze.md](docs/fcmp-mainnet-freeze.md) | Mainnet encoding freeze + D14 artifact index |
+| [docs/fcmp-composition-memo.md](docs/fcmp-composition-memo.md) | Internal FCMP0001 composition review |
+| [docs/fcmp-soak-report.md](docs/fcmp-soak-report.md) | Automated soak + multi-node procedure |
+| [docs/fcmp-audit-hardening.md](docs/fcmp-audit-hardening.md) | PR-11 hardening, fuzz, residual audit risks |
 | [scripts/systemd/](scripts/systemd/) | systemd units for seed & miner |
 | [chainspecs/](chainspecs/) | Exported chain specs with bootnodes |
 | [examples/learn_ringct.py](examples/learn_ringct.py) | Runnable privacy walkthrough |

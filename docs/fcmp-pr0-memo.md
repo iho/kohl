@@ -197,7 +197,7 @@ Kohl is **Ristretto + own domains** — any reuse is a **rewrite**, not a vendor
 | Path A full ZK membership | **DEFER** | PR-5a research; not PR-1 blocker |
 | Path B membership freeze | **NO-GO** | Need cycle spike + embedding + re-bench |
 | Dual mode | **OUT OF SCOPE** | Pre-launch FCMP-only policy (design rev 6) |
-| Mainnet FcmpOnly | **NO-GO yet** | Blocked by missing composition + D14 |
+| Mainnet FcmpOnly | **GO (encoding freeze PR-10)** | FCMP0001 n≤64; external audit → PR-11; Path B still open |
 | Naive full-set CLSAG | **NO-GO** | Cost model |
 | PR-0b Path A maintenance freeze + no Dual | **GO** | Design rev 6 |
 

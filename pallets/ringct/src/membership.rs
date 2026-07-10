@@ -1,10 +1,9 @@
-//! Path A membership **tree maintenance** (PR-1).
+//! Path A membership **tree maintenance** (PR-1; freeze PR-0b / PR-10).
 //!
 //! Pure-runtime blake2 Merkle over sparse slots aligned to global output
-//! indices. Spends remain CLSAG in this phase; the tree is scaffolding for
-//! FCMP (see `docs/fcmp-design.md`).
-//!
-//! Domains are consensus-critical and frozen in PR-0b / ringct-primitives.
+//! indices. Production spends are FCMP-only (PR-7); maturity is implied by
+//! non-EMPTY admission (D11). Domains are consensus-critical
+//! (`docs/fcmp-mainnet-freeze.md`).
 
 use alloc::vec::Vec;
 use ringct_primitives::{

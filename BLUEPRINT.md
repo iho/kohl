@@ -1,10 +1,12 @@
 # Private Cash L1 — Architecture & Implementation Blueprint
 
 A pure cash-only Layer-1 blockchain built with the Polkadot SDK (Substrate/FRAME) in Rust,
-emulating Monero's privacy structure: **ring signatures** (sender anonymity), **stealth
-addresses** (receiver privacy), and **RingCT-style confidential amounts** (Pedersen
-commitments + Bulletproofs range proofs). Privacy is mandatory at the protocol level —
-there is no transparent transfer path.
+emulating Monero's privacy structure with a **full-chain membership** spend path
+(**FCMP** — sender anonymity over the mature output set), **stealth addresses**
+(receiver privacy), and **RingCT-style confidential amounts** (Pedersen commitments +
+Bulletproofs). Privacy is mandatory at the protocol level — there is no transparent
+transfer path and **no Dual** CLSAG-ring coexistence on mainnet (see
+[`docs/fcmp-design.md`](docs/fcmp-design.md)).
 
 > Working name used throughout: **`pallet-ringct`** for the core pallet, "**kohl**" for the chain.
 
@@ -18,9 +20,9 @@ This repository implements the blueprint through Phase 4 (all crates compile aga
 | Crate | Role | Status |
 |---|---|---|
 | `primitives/ringct-primitives` | consensus constants, emission curve | ✅ tested |
-| `primitives/ringct-crypto` | Pedersen commitments, Bulletproofs, **CLSAG**, **stealth addresses**, host functions | ✅ tested |
-| `primitives/kohl-runtime-api` | `DifficultyApi` + `RingCtApi` declarations | ✅ builds |
-| `pallets/ringct` | the monetary system (outputs, key images, RingCT transfers, coinbase) | ✅ tested |
+| `primitives/ringct-crypto` | Pedersen/BP, **FCMP0001** + CLSAG SA+L, stealth, host functions | ✅ tested |
+| `primitives/kohl-runtime-api` | `DifficultyApi` + `RingCtApi` (membership + FCMP mode) | ✅ builds |
+| `pallets/ringct` | monetary system: outputs, key images, **FCMP transfers**, membership tree, coinbase | ✅ tested |
 | `pallets/difficulty` | LWMA PoW difficulty | ✅ tested |
 | `consensus/kohl-pow` | mining core + `sc-consensus-pow` `PowAlgorithm` (RandomX) | ✅ core tested; `node`/`randomx` feature-gated |
 | `runtime` | `#[frame_support::runtime]` wiring, genesis, runtime APIs | ✅ builds native + WASM |
@@ -37,10 +39,11 @@ The WASM runtime build needs `--allow-undefined` passed to the wasm linker (so t
 and `ringct_crypto` host functions stay as imports); this is wired in `.cargo/config.toml`
 via `WASM_BUILD_RUSTFLAGS`.
 
-**Remaining work**: merge machine weights from `./scripts/benchmark-ringct.sh`
-into production `WeightInfo` after a full STEPS/REPEAT run; external crypto
-audit (Phase 5). Dandelion++ stem/fluff diffusion is implemented in
-`node/src/dandelion/`.
+**Remaining work**: optional re-bench of machine weights after Path B / larger
+FCMP; **independent external crypto audit** of FCMP composition + host boundary
+(Phase 5 / [`docs/fcmp-audit-hardening.md`](docs/fcmp-audit-hardening.md)).
+Dandelion++ stem/fluff diffusion is implemented in `node/src/dandelion/`.
+Mainnet **encoding freeze** is recorded in [`docs/fcmp-mainnet-freeze.md`](docs/fcmp-mainnet-freeze.md).
 
 **Benchmarks**: `frame_benchmarking::Benchmark` is exported by the runtime.
 Because RingCT uses custom host functions, measure with
@@ -62,9 +65,11 @@ wallet; ringct RPC; fuzz; authorize; epoch PoW seed.
   reveal **key images** (linkable-ring nullifiers) to prevent double-spends without
   revealing which output was spent.
 - **Three pillars**, mapped to concrete, implementable Rust cryptography:
-  1. Sender anonymity → **CLSAG** linkable ring signatures over Ristretto
-     (Monero's current scheme, post-MLSAG; see [Goodell–Noether–RandomRun, "Concise
-     Linkable Ring Signatures and Forgery Against Adversarial Keys", 2019](https://eprint.iacr.org/2019/654)).
+  1. Sender anonymity → **FCMP** full mature-set membership under a Path A Merkle
+     tree (`FCMP0001` interim: digests + CLSAG SA+L over all non-EMPTY leaves, n≤64).
+     Headline upgrade path is Curve Trees / FCMP++-style log-size membership
+     ([`docs/fcmp-design.md`](docs/fcmp-design.md)). Key images remain CryptoNote
+     `I = x·Hp(P)` (CLSAG-compatible linkability).
   2. Receiver privacy → **CryptoNote dual-key stealth addresses** with Monero-style
      **view tags** for fast scanning ([CryptoNote v2.0 whitepaper, van Saberhagen 2013](https://web.archive.org/web/20201028121818/https://cryptonote.org/whitepaper.pdf)).
   3. Amount confidentiality → **Pedersen commitments + Bulletproofs(+) range proofs**
@@ -75,12 +80,12 @@ wallet; ringct RPC; fuzz; authorize; epoch PoW seed.
 - **Consensus**: PoW (RandomX) block production — justified in §1.4.
 - **Fair launch**: zero genesis supply; all emission via mining rewards with a Monero-like
   smooth curve and tail emission.
-- **Performance**: heavy verification (CLSAG, Bulletproofs) runs **native via runtime host
+- **Performance**: heavy verification (FCMP, Bulletproofs) runs **native via runtime host
   functions**, not interpreted WASM — this is the single most important Substrate-specific
   design decision, detailed in §1.6.
 
-If classic MLSAG were required verbatim it would be strictly worse than CLSAG (larger,
-slower, same assumptions), so CLSAG is used — it *is* Monero's production scheme since 2020.
+**Historical note:** Phase 3 used fixed-size CLSAG rings (16). Pre-launch policy (rev 6)
+**deleted** the CLSAG transfer path; mainnet is FCMP-only with no Dual era.
 
 ---
 
@@ -91,21 +96,22 @@ slower, same assumptions), so CLSAG is used — it *is* Monero's production sche
 ```
 ┌──────────────────────────── node (native) ─────────────────────────────┐
 │  sc-consensus-pow (RandomX via randomx-rs)   sc-network / RPC / txpool │
-│  Host functions: ringct_verify_clsag, ringct_verify_bp_batch  ◄────┐   │
-├────────────────────────────────────────────────────────────────────┼───┤
-│                        runtime (WASM + native)                     │   │
-│  frame-system │ pallet-timestamp │ pallet-ringct ──── calls ───────┘   │
-│               │ pallet-transaction-payment (minimal/none — see §3.6)   │
-└────────────────────────────────────────────────────────────────────────┘
+│  Host functions: verify_fcmp_v1, verify_bp, balance, …     ◄────┐   │
+├─────────────────────────────────────────────────────────────────┼───┤
+│                        runtime (WASM + native)                  │   │
+│  frame-system │ pallet-timestamp │ pallet-ringct ──── calls ────┘   │
+│               │ pallet-difficulty (LWMA)                            │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-- The runtime is minimal: `frame-system`, `pallet-timestamp`, and **`pallet-ringct`**.
-  There is **no `pallet-balances` exposed to users** — the native unit exists only inside
-  the confidential output set. Fees are paid Monero-style: the fee is the one public
-  amount in each transaction and is consumed by the commitment balance equation (§3.6).
-- Transactions are **unsigned extrinsics** (`ValidateUnsigned`): like a Monero tx, a
-  transfer is self-authenticating — the CLSAG signatures *are* the authorization. There
-  is no account, no nonce, no signer. Replay is impossible because key images are
+- The runtime is minimal: `frame-system`, `pallet-timestamp`, **`pallet-ringct`**,
+  `pallet-difficulty`. There is **no `pallet-balances` exposed to users** — the native
+  unit exists only inside the confidential output set. Fees are paid Monero-style: the
+  fee is the one public amount in each transaction and is consumed by the commitment
+  balance equation (§3.6).
+- Transactions are **unsigned extrinsics** (`#[pallet::authorize]`): like a Monero tx, a
+  transfer is self-authenticating — the **FCMP+SA+L proof** *is* the authorization.
+  There is no account, no nonce, no signer. Replay is impossible because key images are
   single-use.
 
 ### 1.2 Data model: private UTXO / commitment set
@@ -119,24 +125,26 @@ Each **output** (TXO) stored on chain:
 | view tag | 1 B | fast wallet scanning (Monero 2022 optimization) |
 | encrypted amount | 8 B | `a XOR H(shared_secret)` so receiver can decode |
 | tx pubkey `R = rG` | 32 B | per-tx, shared by its outputs |
-| global output index | 8 B | key for ring-member referencing |
+| global output index | 8 B | key for tree slot / membership alignment |
 
 Outputs are **append-only** and indexed by a monotonically increasing **global output
-index** (like Monero), so a ring can reference its members as compact `u64` offsets
-instead of 32-byte keys. Outputs are never deleted (any output may be a decoy forever).
+index** (like Monero). A sparse **membership tree** uses the same indices as slots:
+`EMPTY` until mature, then `L(P,C)`. Outputs are never deleted (full mature-set history
+by default).
 
 Each **spend** publishes a **key image** `I = x·Hp(P)` per real input. The chain keeps a
 permanent key-image set; inclusion ⇒ reject (double spend). Key images reveal nothing
-about *which* ring member was spent (linkability without traceability — CryptoNote §4).
+about *which* mature output was spent among the anonymity set (linkability without
+traceability — CryptoNote §4).
 
 ### 1.3 The three pillars on Substrate
 
-1. **Sender anonymity — CLSAG rings.** Every input is a ring of `RING_SIZE = 16`
-   outputs (15 decoys + 1 real, indices chosen wallet-side with a gamma distribution
-   over output age, per the [Möser et al. 2018 empirical analysis](https://arxiv.org/abs/1704.04299)
-   that informed Monero's decoy sampler). The CLSAG proves: "I know the private key of
-   one ring member, its key image is `I`, and the member's commitment minus this input's
-   *pseudo-output commitment* is a commitment to zero."
+1. **Sender anonymity — FCMP (full mature-set membership).** Every input proves the real
+   spend is one of **all outputs admitted into the membership tree** at a chosen root
+   (admitted ⇔ mature under `SpendableAge` / `CoinbaseMaturity`). Interim **FCMP0001**
+   binds digests to the Path A Merkle root and uses CLSAG over the full non-EMPTY set for
+   spend-auth + linkability + amount re-blind (n≤64). Wallets do **not** sample decoy
+   rings. Transparent Merkle paths are rejected (D17).
 2. **Receiver privacy — stealth addresses.** Addresses are dual-key `(A = aG, B = bG)`
    (view/spend). Sender picks random `r`, publishes `R = rG`, derives one-time key
    `P = Hs(rA ‖ i)·G + B`. Only the holder of `a` can detect the output (view key
@@ -269,27 +277,28 @@ pub struct Output {
     pub tx_pubkey:    RistrettoPoint,
 }
 
-/// One ring input inside a transfer.
+/// One FCMP input inside a transfer (production; no decoy ring indices).
 #[derive(Encode, Decode, TypeInfo, Clone, PartialEq)]
-pub struct RingInput {
-    /// Global output indices of the ring members (RING_SIZE of them, sorted).
-    pub ring: BoundedVec<u64, ConstU32<RING_SIZE>>,
+pub struct FcmpInput {
     pub key_image: KeyImage,
     /// Pseudo-output commitment C' for this input.
     pub pseudo_commitment: Commitment,
-    /// CLSAG signature bytes: c1 ‖ s[0..RING_SIZE] ‖ D  = 32*(ring+2) bytes.
-    pub clsag: BoundedVec<u8, ConstU32<{ 32 * (RING_SIZE + 2) }>>,
+    /// FCMP0001 proof bytes (membership + SA+L); ≤ MAX_FCMP_PROOF_BYTES.
+    pub fcmp_proof: BoundedVec<u8, ConstU32<MAX_FCMP_PROOF_BYTES>>,
 }
 
 #[derive(Encode, Decode, TypeInfo, Clone, PartialEq)]
 pub struct TransferTx {
-    pub inputs:  BoundedVec<RingInput, ConstU32<MAX_INPUTS>>,   // e.g. 8
-    pub outputs: BoundedVec<Output,    ConstU32<MAX_OUTPUTS>>,  // e.g. 8
+    /// Shared membership root for all inputs (D13).
+    pub membership_root: [u8; 32],
+    pub inputs:  BoundedVec<FcmpInput, ConstU32<MAX_FCMP_INPUTS>>, // 4
+    pub outputs: BoundedVec<Output,    ConstU32<MAX_OUTPUTS>>,    // 8
+    pub tx_pubkey: RistrettoPoint,
     /// Aggregated Bulletproof covering all output commitments.
-    pub range_proof: BoundedVec<u8, ConstU32<MAX_BP_BYTES>>,    // ~1.5 KiB for 8 outputs
+    pub range_proof: BoundedVec<u8, ConstU32<MAX_BP_BYTES>>,
     pub fee: u64,            // the only public amount
-    pub encrypted_memo: Option<BoundedVec<u8, ConstU32<64>>>,   // payment-id style, optional
 }
+// Signing domain: "kohl/transfer/v4" (frozen — docs/fcmp-mainnet-freeze.md).
 ```
 
 ### 3.2 Storage
@@ -307,11 +316,6 @@ pub type NextOutputIndex<T> = StorageValue<_, u64, ValueQuery>;
 #[pallet::storage]
 pub type KeyImages<T> = StorageMap<_, Blake2_128Concat, KeyImage, (), OptionQuery>;
 
-/// Block height at which each output was created (enforces the
-/// COINBASE_LOCK / SPENDABLE_AGE maturity rules and helps decoy sampling).
-#[pallet::storage]
-pub type OutputHeight<T> = StorageMap<_, Twox64Concat, u64, BlockNumberFor<T>>;
-
 /// Total coins emitted so far (public — supply is auditable, amounts are not).
 #[pallet::storage]
 pub type Emitted<T> = StorageValue<_, u64, ValueQuery>;
@@ -319,11 +323,14 @@ pub type Emitted<T> = StorageValue<_, u64, ValueQuery>;
 /// Fees accumulated in the current block, paid to the next coinbase.
 #[pallet::storage]
 pub type BlockFees<T> = StorageValue<_, u64, ValueQuery>;
+
+/// Membership tree: TreeSlots, Admitted, MembershipLeafDigest, MembershipRoot, …
+/// (Path A sparse Merkle; see pallets/ringct/src/membership.rs).
 ```
 
-Consensus-critical constants: `RING_SIZE = 16`, `SPENDABLE_AGE = 10` blocks (outputs
-can't be ring members or be spent before 10 confirmations — kills reorg-based ring
-poisoning), `COINBASE_LOCK = 60` blocks.
+Consensus-critical constants: `SPENDABLE_AGE = 10` / `COINBASE_MATURITY = 60`
+(maturity via tree admission, not ring membership), `MAX_FCMP_INPUTS = 4`,
+`MAX_FCMP_ANON_SET = 64` (FCMP0001 interim), `MAX_FCMP_PROOF_BYTES = 12288`.
 
 ### 3.3 Extrinsics
 
@@ -471,11 +478,10 @@ All heavy lifting is wallet-side; the chain only verifies.
   the shared secret, check the 1-byte **view tag** first (rejects ~255/256 outputs with
   one hash), then full derivation check; decrypt amount; verify it against the
   commitment before trusting it.
-- **Spending**: pick real output, sample 15 decoys with a **gamma distribution over
-  output age** projected through `output_distribution` (mirror Monero's sampler — this
-  is empirically the hardest thing to get right; a bad sampler is the #1 practical
-  deanonymization vector). Build pseudo-commitments, CLSAGs, aggregated Bulletproof
-  (~50–150 ms total on a laptop — fine), submit via `author_submitExtrinsic`.
+- **Spending**: pick real output(s); fetch membership root + leaf digests (RPC /
+  `RingCtApi`); build **FCMP0001** proofs (full mature set under root) + pseudo-
+  commitments + aggregated Bulletproof; submit via `author_submitExtrinsic`. No
+  decoy sampling on the production path (`legacy-decoy` is dev-only).
 - **View-only wallets** work by construction (give `a`, keep `b` offline) — this is the
   auditability story for exchanges/merchants.
 
@@ -506,31 +512,34 @@ Bulletproofs + balance equation + encrypted amounts. Introduce the
 `verify_bulletproof_batch` host function and its versioning story. Property tests:
 ∀ valid tx passes; mutate any byte ⇒ fails.
 
-**Phase 3 — Rings + stealth (4–6 wk).** CLSAG (vendor/port `monero-clsag` from
-monero-serai onto Ristretto), key images, `verify_clsag` host function, stealth address
-derivation + view tags in the wallet, gamma decoy sampler, `SPENDABLE_AGE` rules.
-Cross-test CLSAG vectors against Monero's (adjusted for Ristretto).
+**Phase 3 — Stealth + linkable spends (historical).** CLSAG rings were the first
+sender-anonymity path (ring size 16, decoy sampler). Stealth + view tags + key images
+landed here. **Superseded pre-launch by FCMP-only** (no Dual).
 
 **Phase 4 — Consensus + integration (3–4 wk).** RandomX PoW, difficulty pallet, emission
-curve, testnet ("**kohl-ash**"), chaos testing (reorgs, spam at min fee, huge rings of
-immature outputs), block-weight limits sized from real host-function benchmarks
-(`frame-benchmarking` on the pallet, criterion on the host fns).
+curve, testnet ("**kohl-ash**"), chaos testing (reorgs, spam at min fee), block-weight
+limits sized from real host-function benchmarks.
 
-**Phase 5 — Hardening (ongoing).** External cryptography audit (non-negotiable — §9.1),
-fuzzing (`cargo-fuzz` on tx decoding + verification), privacy analysis (simulate
-chain-analysis attacks against the decoy sampler), docs, fair-launch announcement with
-≥ 2 weeks public notice + published genesis.
+**Phase 4b / FCMP (done through PR-11).** Membership tree, `verify_fcmp_v1`, FCMP0001
+composition, weights, wallet membership cache, host matrix, encoding freeze, fuzz +
+docs. See [`docs/fcmp-design.md`](docs/fcmp-design.md).
+
+**Phase 5 — Hardening (ongoing).** Independent external audit of FCMP composition + host
+boundary (§9.1); continuous fuzzing (`fcmp_verify`, `transfer_decode`, `clsag_verify`);
+Path B / Curve Trees for n≫64; fair-launch announcement with ≥ 2 weeks public notice +
+published genesis.
 
 **Known challenges & mitigations**
 
 | Challenge | Mitigation |
 |---|---|
-| WASM crypto performance | host functions (§1.6); batch verification; block weight budgeted from benchmarks |
-| Storage growth (outputs/key images never pruned) | ~150 B/output; at 10 tx/block/min ≈ 2–3 GiB/yr — acceptable; paged storage maps; document pruning non-options honestly |
-| CLSAG implementation risk | reuse monero-serai code, differential-test against Monero, audit |
-| Decoy-selection deanonymization | copy Monero's battle-tested sampler; ban immature/duplicate members at consensus level |
-| `sc-consensus-pow` maintenance | pin stable SDK; keep the PoW surface small; budget upkeep |
-| Fee spam (no accounts) | min fee-per-byte + `provides`-based txpool dedup + bounded tx size |
+| WASM crypto performance | host functions (§1.6); block weight budgeted from benchmarks |
+| Storage growth (outputs/key images never pruned) | ~150 B/output; membership digests grow with slots; document honestly |
+| FCMP composition risk | internal memo + hardening tests; **external audit** before social launch |
+| Interim n≤64 anonymity set | product honesty; Path B research (Curve Trees) |
+| Host/runtime skew | node-first upgrades; `fcmp_capability` matrix |
+| `sc-consensus-pow` maintenance | pin stable SDK; keep the PoW surface small |
+| Fee spam (no accounts) | min fee-per-byte + `provides`-based txpool dedup + proof size caps |
 
 ---
 
@@ -719,36 +728,33 @@ before launch; anyone can mine block 1.
 
 ### 9.1 Cryptographic security
 
-- **Mandatory external audit** of: CLSAG port (signature soundness + linkability),
-  host-function boundary (serialization = consensus!), balance equation, Bulletproof
+- **Mandatory external audit** of: FCMP0001 composition (membership ⊕ SA+L), host-
+  function boundary (serialization = consensus!), balance equation, Bulletproof
   integration (generator choice `H = hash_to_point("kohl.H")`, NUMS — never a scalar
-  multiple of `G` with known discrete log, or amounts can be forged). Budget ≥ 2
-  independent reviews before mainnet.
+  multiple of `G` with known discrete log, or amounts can be forged). Budget ≥ 1–2
+  independent reviews before social mainnet. Internal hardening:
+  [`docs/fcmp-audit-hardening.md`](docs/fcmp-audit-hardening.md).
 - Ristretto removes the cofactor bug class, but **key-image domain separation** and
-  transcript binding (every tx field inside the CLSAG message hash) still need care —
+  transcript binding (`kohl/transfer/v4` msg + FCMP domains) still need care —
   malleability of any unsigned field is a consensus-split vector.
-- Fuzz the decoder: unsigned extrinsics mean *anyone* can feed the verifier bytes.
+- Fuzz the decoder and verifier: unsigned extrinsics mean *anyone* can feed bytes
+  (`fuzz/fcmp_verify`, `transfer_decode`, `clsag_verify`).
 
 ### 9.2 Privacy limitations (be honest in the docs)
 
-- Ring signatures give a **plausible-deniability set of 16**, not cryptographic
-  unlinkability like a Sapling-style pool. Known attack classes carry over from Monero:
-  black-marble flooding (attacker mints outputs to dilute decoys), timing/decoy-sampling
-  statistics, EAE (exchange-attacker-exchange) correlation. Mitigations: exact Monero
-  sampler, mandatory uniform tx shape (pad to 2 outputs like Monero), `SPENDABLE_AGE`.
-- Network-layer leakage: Dandelion++ stem/fluff diffusion is enabled on the
-  node (`node/src/dandelion/`); still run Tor/i2p for defence in depth — see
-  [docs/tor-runbook.md](docs/tor-runbook.md).
+- **FCMP0001** gives index-hiding among the **full mature set at a root**, capped at
+  **n ≤ 64** (O(n) proof). That is stronger than fixed ring-16 decoys, but **not** yet
+  Monero FCMP++ / Curve Trees scale, and not a Sapling-style pool.
+- Residual metadata: spend timing vs output age, EAE exchange correlation, network
+  origin (mitigate with Dandelion++ + Tor — [docs/tor-runbook.md](docs/tor-runbook.md)).
+- Black-marble flooding still grows the tree (fees/weight throttle minting); it no
+  longer poisons a *wallet-chosen* decoy set because decoys are not used.
 
 ### 9.3 Alternatives & future work
 
-- If ring-size limits become the binding privacy constraint, the upgrade path is a
-  **full-chain-membership-proof pool** (à la Monero's planned FCMP++ / Curve Trees or a
-  Halo2 shielded pool) — the output/nullifier storage model in this design is already
-  the right substrate for that migration, which is a major reason to prefer it over an
-  account-model hack now.
-- Seraphis/Jamtis (Monero's next-gen tx protocol) is worth tracking for address-scheme
-  improvements before freezing the address format.
+- **Path B / Curve Trees** (or hash-Merkle ZK membership) for log-size proofs when
+  n≫64 — see [`docs/fcmp-design.md`](docs/fcmp-design.md) D1–D2 and PR-0 memo.
+- Seraphis/Jamtis address schemes remain optional later work (non-blocking).
 
 ### 9.4 Regulatory
 
@@ -761,11 +767,9 @@ funds — every user only ever spends their own outputs.
 
 ### 9.5 Scalability
 
-60 s blocks, ~2–4 KiB per 2-in/2-out tx (dominated by 16-member rings + BP). With
-batch verification a mid-range node verifies hundreds of tx/s natively — throughput will
-bottleneck on bandwidth/storage before CPU. Dynamic block-weight (Monero-style
-median-based growth with a reward penalty) is the Phase 5 answer to fee spikes; keep the
-base limit conservative (300 KiB) at launch.
+60 s blocks; FCMP0001 txs are larger than old ring-16 (proofs up to ~12 KiB/input, ≤4
+inputs). Weight formulas scale with tree size; keep the base block limit conservative
+(300 KiB) at launch. Path B is required before advertising large-set throughput.
 
 ---
 
@@ -775,6 +779,8 @@ base limit conservative (300 KiB) at launch.
 - Ring Confidential Transactions — S. Noether, 2016 · [eprint 2015/1098](https://eprint.iacr.org/2015/1098)
 - Bulletproofs — Bünz et al., 2017 · [eprint 2017/1066](https://eprint.iacr.org/2017/1066)
 - CLSAG — Goodell, Noether, RandomRun, 2019 · [eprint 2019/654](https://eprint.iacr.org/2019/654)
+- Curve Trees — eprint 2022/756; Monero FCMP++ blog · [getmonero.org](https://www.getmonero.org/2024/04/27/fcmps.html)
+- kohl FCMP design · [`docs/fcmp-design.md`](docs/fcmp-design.md)
 - Monero empirical traceability — Möser et al., 2018 · [arXiv 1704.04299](https://arxiv.org/abs/1704.04299)
 - Polkadot SDK · [repo](https://github.com/paritytech/polkadot-sdk) · [release registry](https://github.com/paritytech/release-registry) · [solochain template](https://github.com/paritytech/polkadot-sdk-solochain-template) · [docs](https://docs.polkadot.com/)
 - Kulupu (Substrate PoW reference) · [repo](https://github.com/kulupu/kulupu)

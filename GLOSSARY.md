@@ -50,49 +50,50 @@ That is achieved with **three pillars**:
 
 | Pillar | Hides… | Mechanism |
 |--------|--------|-----------|
-| **Sender anonymity** | *Which* past output was spent | **Ring signature** (CLSAG) + **decoys** |
+| **Sender anonymity** | *Which* past output was spent | **FCMP** full mature-set membership (+ CLSAG SA+L inside interim proofs) |
 | **Receiver privacy** | *Who* was paid | **Stealth / one-time addresses** |
 | **Amount confidentiality** | *How much* moved | **Pedersen commitments** + **range proofs** (Bulletproofs) |
 
 **Double-spend prevention** uses **key images** (linkable nullifiers): the
-chain learns “this secret key was used once” without learning *which* ring
-member it was.
+chain learns “this secret key was used once” without learning *which* mature
+output it was among the anonymity set.
 
 ### How kohl relates to Monero
 
 | | Monero | kohl |
 |---|---|---|
-| Privacy model | CryptoNote + RingCT + CLSAG | Same three pillars |
+| Privacy model | CryptoNote + RingCT + CLSAG (FCMP++ planned) | Same pillars; **FCMP-only spends** pre-launch |
 | Curve / group | ed25519 (cofactor 8) | **Ristretto** (prime order; fewer historical footguns) |
 | Engine | Custom C++ node | **Polkadot SDK / Substrate** (Rust) |
 | Consensus | RandomX PoW | RandomX PoW (dev path may use a hasher fallback) |
-| Money model | Outputs + key images | Same, inside `pallet-ringct` |
+| Money model | Outputs + key images | Same, inside `pallet-ringct` + membership tree |
 | Address compatible with Monero? | — | **No** (different group + domains) |
 
-Think of kohl as: *Monero-shaped cash, reimplemented as a Substrate solochain*.
+Think of kohl as: *Monero-shaped cash, reimplemented as a Substrate solochain*,
+with **full-chain membership** as the production spend path (interim n≤64).
 
 ### Life of one private transfer (kohl)
 
 ```text
 Wallet (sender)                         Chain (pallet-ringct)
 ─────────────────                       ─────────────────────
-1. Pick real output you own
-2. Sample 15 decoy outputs (ring)
+1. Pick real output(s) you own
+2. Fetch membership root + digests
 3. Build pseudo-commitments C'
-4. Build CLSAG (proves you own ONE
-   ring member + amount link)
+4. Build FCMP0001 proof (membership
+   under root + SA+L / key image)
 5. Build Bulletproof on outputs
 6. Encrypt amount for receiver
-7. Submit unsigned extrinsic  ──────►  verify shape
-                                       verify each CLSAG
+7. Submit unsigned extrinsic  ──────►  verify shape + root window
+                                       verify_fcmp_v1 per input
                                        verify Σ C' = Σ C_out + fee·H
                                        verify range proof
                                        insert key images
-                                       append new outputs
+                                       append outputs + grow tree
 ```
 
 There is **no account**, **no nonce**, **no signature from an “address”**.
-The CLSAG *is* the authorization.
+The **FCMP proof** *is* the authorization. (No wallet decoy ring.)
 
 ---
 
@@ -247,20 +248,34 @@ print("late reward =", block_reward(MAX_CURVE) / ATOMIC, "KOHL (tail)")
 
 ## 3. Pillar 1 — Sender anonymity
 
-### Ring signature
+### FCMP (full-chain membership proofs)
+
+**Production sender anonymity on kohl.** A spend proves the real input is one of
+**all mature (admitted) outputs** under a published Merkle root — not a
+wallet-chosen ring of 16. Interim wire format **`FCMP0001`**: Path A digests +
+CLSAG SA+L over the full non-EMPTY set (n≤64). See `docs/fcmp-design.md`.
+
+| Term | Meaning |
+|------|---------|
+| **Membership root** | 32-byte Merkle root anchored in the tx |
+| **Admitted / non-EMPTY** | Mature leaf `L(P,C)` openable by the proof |
+| **EMPTY** | Immature slot; not in the mature set |
+| **FCMP0001** | Interim proof tag (O(n); Path B for large n) |
+
+### Ring signature (historical / SA+L building block)
 
 A signature that proves: *“I know the private key of **one** of these public
 keys”* without revealing which.
 
-**Ring** = list of public keys (in Monero/kohl: past outputs’ one-time keys
-paired with their commitments).
+**Ring** = list of public keys (in Monero / inside kohl FCMP0001: mature outputs’
+one-time keys paired with their commitments).
 
 | Term | Meaning |
 |------|---------|
 | **Real member** | The output you actually spend |
-| **Decoy / mixin** | Other outputs that could plausibly be the spend |
-| **Ring size** | Total members (kohl production: **16** = 1 real + 15 decoys) |
-| **Anonymity set** | Plausible deniability set size (here ≤ ring size; statistical attacks can shrink it) |
+| **Decoy / mixin** | Other outputs that could plausibly be the spend (historical ring path) |
+| **Ring size** | Historical fixed rings: **16**. Production FCMP0001 uses full mature set ≤ **64** |
+| **Anonymity set** | For FCMP: full mature set at the root (≤64 interim) |
 
 ### Linkable ring signature
 
@@ -268,18 +283,19 @@ Ordinary rings hide which key signed. **Linkable** rings also publish a
 **key image** so that signing twice with the same key is detectable —
 without revealing *which* ring member was used.
 
-That is exactly the double-spend tool Monero needs.
+That is exactly the double-spend tool Monero and kohl need.
 
 ### MLSAG vs CLSAG
 
 | | **MLSAG** | **CLSAG** |
 |---|-----------|-----------|
 | Full name | Multilayered Linkable Spontaneous Anonymous Group | Concise Linkable Spontaneous Anonymous Group |
-| Era | Pre-2020 Monero | Monero since 2020; **kohl** |
+| Era | Pre-2020 Monero | Monero since 2020; **kohl SA+L inside FCMP0001** |
 | Size / speed | Larger, slower | Smaller, faster, same assumptions |
 | Paper | — | Goodell–Noether–RandomRun, eprint 2019/654 |
 
-**kohl implements CLSAG**, not MLSAG.
+**kohl uses CLSAG as the SA+L layer inside FCMP0001**, not as a standalone
+ring-16 transfer path.
 
 ### Key image
 
@@ -761,8 +777,9 @@ all nodes. Crypto host functions are **imports** into that WASM module.
 | **Dandelion++** | Tx gossip that reduces network-level origin leakage |
 | **Anonymity set ≠ ring size** | Statistical analysis can reduce effective privacy |
 
-Ring signatures give **plausible deniability among ring members**, not the
-same cryptographic anonymity as a full Sapling/Halo shielded pool.
+Fixed-size ring signatures give **plausible deniability among ring members**.
+kohl production uses **FCMP** (full mature set at a root; interim n≤64) — still
+not a Sapling/Halo shielded pool, and not yet log-size Curve Trees.
 
 ---
 
@@ -771,7 +788,7 @@ same cryptographic anonymity as a full Sapling/Halo shielded pool.
 | Path | Role |
 |------|------|
 | `primitives/ringct-primitives` | Consensus constants, emission |
-| `primitives/ringct-crypto` | CLSAG, stealth, Pedersen/BP, host functions |
+| `primitives/ringct-crypto` | FCMP0001, CLSAG SA+L, stealth, Pedersen/BP, host functions |
 | `primitives/kohl-runtime-api` | RPC/runtime APIs for wallets |
 | `pallets/ringct` | Monetary rules (§3.4 verification) |
 | `pallets/difficulty` | LWMA difficulty state |
@@ -782,9 +799,9 @@ same cryptographic anonymity as a full Sapling/Halo shielded pool.
 
 ### Signing domain / versioning
 
-`SIGNING_DOMAIN = "kohl/transfer/v3"` is hashed into every CLSAG message.
-Changing tx semantics requires bumping this (and often host fn `*_v1` →
-`*_v2`) so old blocks stay unambiguously defined.
+`SIGNING_DOMAIN = "kohl/transfer/v4"` is hashed into every FCMP transfer
+message. Changing tx semantics requires bumping this (and often host fn
+`*_v1` → `*_v2`) so old blocks stay unambiguously defined.
 
 ---
 
@@ -794,7 +811,8 @@ Changing tx semantics requires bumping this (and often host fn `*_v1` →
 |---------|-----------|----------|
 | **ASIC** | Application-Specific Integrated Circuit | Specialized mining hardware |
 | **BP** | Bulletproof(s) | Short range proof |
-| **CLSAG** | Concise Linkable Spontaneous Anonymous Group | Monero/kohl ring signature |
+| **CLSAG** | Concise Linkable Spontaneous Anonymous Group | Linkable ring sig; used inside FCMP0001 SA+L |
+| **FCMP** | Full-Chain Membership Proof | Mature-set membership spend path |
 | **CPU** | Central Processing Unit | RandomX target hardware |
 | **CT** | Confidential Transactions | Hidden amounts via commitments |
 | **DH / ECDH** | (Elliptic Curve) Diffie–Hellman | Shared secret `r·A = a·R` |
@@ -809,7 +827,7 @@ Changing tx semantics requires bumping this (and often host fn `*_v1` →
 | **OTK** | One-Time Key | Stealth output public key `P` |
 | **PoS** | Proof of Stake | Stake-based consensus |
 | **PoW** | Proof of Work | Mining-based consensus |
-| **RingCT** | Ring Confidential Transactions | Rings + CT + range proofs |
+| **RingCT** | Ring Confidential Transactions | Historical name; kohl uses CT + FCMP spends |
 | **RPC** | Remote Procedure Call | Node API for wallets |
 | **SDK** | Software Development Kit | Polkadot SDK |
 | **TXO / UTXO** | (Unspent) Transaction Output | Coin unit of the UTXO model |
@@ -840,8 +858,8 @@ Changing tx semantics requires bumping this (and often host fn `*_v1` →
 Σ C'_i  =  Σ C_j  +  fee · H
 ```
 
-**kohl CLSAG (per input):** knowledge of one ring member’s `x` and blinding
-difference tying `C` to `C'`, with key image `I`.
+**kohl FCMP (per input):** membership under `membership_root` + knowledge of one
+mature member’s `x` and blinding difference tying `C` to `C'`, with key image `I`.
 
 ---
 
@@ -851,10 +869,10 @@ difference tying `C` to `C'`, with key image `I`.
 2. Python §3 key image + §5 Pedersen balance.
 3. Python §4 stealth + §6 end-to-end toy.
 4. `BLUEPRINT.md` §1 and §3.4 (exact chain rules).
-5. `primitives/ringct-crypto/src/{stealth,clsag}.rs` and
+5. `primitives/ringct-crypto/src/{stealth,fcmp,clsag}.rs` and
    `pallets/ringct/src/lib.rs` (`verify_transfer`).
-6. Papers: CryptoNote (2013), RingCT (2015/1098), Bulletproofs (2017/1066),
-   CLSAG (2019/654).
+6. `docs/fcmp-design.md` and papers: CryptoNote (2013), RingCT (2015/1098),
+   Bulletproofs (2017/1066), CLSAG (2019/654), Curve Trees (2022/756).
 
 ---
 
@@ -862,7 +880,7 @@ difference tying `C` to `C'`, with key image `I`.
 
 **Why can the chain not steal or freeze my funds?**  
 There is no admin key over outputs. Only the one-time secret `x` produces a
-valid CLSAG for that output’s key image. (Launch may temporarily use
+valid FCMP spend (key image + membership). (Launch may temporarily use
 `sudo` for upgrades — blueprint says burn it.)
 
 **Why is the fee public?**  
@@ -870,14 +888,15 @@ Someone must pay miners; making fee public keeps the balance equation simple
 and the fee market observable without revealing transfer amounts.
 
 **Why not zk-SNARKs like Zcash?**  
-Different tradeoff: rings are battle-tested for Monero-like cash, no trusted
-setup (for this stack), simpler wallet proving. SNARKs can give a larger
-anonymity set later (blueprint §9.3 FCMP++/pools).
+Different tradeoff: no trusted setup for this stack, Monero-shaped keys and
+nullifiers. FCMP targets full mature-set membership; Curve Trees / Path B scale
+further without a SNARK pool (blueprint §9.3).
 
 **Is kohl “as private as Monero”?**  
-Same *cryptographic pillars*. Real privacy also needs decoy sampling quality,
-network privacy (Tor/Dandelion++), user behavior, and ring size — several of
-those are still hardening items on kohl.
+Same *pillars* (sender / receiver / amount). Production spends are **FCMP**
+(full mature set, interim n≤64) rather than ring-16 decoys. Real privacy also
+needs network privacy (Tor/Dandelion++), user behavior, and eventually log-size
+proofs for large trees.
 
 **Can I reuse a Monero address or seed on kohl?**  
 No. Different group (Ristretto vs raw ed25519), different domain tags, different
@@ -885,5 +904,5 @@ chain.
 
 ---
 
-*Document version: companion to `BLUEPRINT.md` and the Phase 3/4 codebase.
-If prose and code disagree, code + blueprint win.*
+*Document version: companion to `BLUEPRINT.md` and the FCMP-only (PR-7…11) codebase.
+If prose and code disagree, code + blueprint + `docs/fcmp-*.md` win.*

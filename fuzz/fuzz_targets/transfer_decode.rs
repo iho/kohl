@@ -1,5 +1,5 @@
-//! Fuzz SCALE decoding of `TransferTx` — unsigned extrinsics mean anyone can
-//! feed the runtime arbitrary bytes (BLUEPRINT.md §9.1).
+//! Fuzz SCALE decoding of FCMP `TransferTx` — unsigned extrinsics mean anyone
+//! can feed the runtime arbitrary bytes (BLUEPRINT.md §9.1 / PR-11).
 #![no_main]
 
 use codec::Decode;

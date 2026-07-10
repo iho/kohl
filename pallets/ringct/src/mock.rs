@@ -1,8 +1,5 @@
 use crate as pallet_ringct;
-use frame_support::{
-    derive_impl,
-    traits::{ConstU32, ConstU64},
-};
+use frame_support::{derive_impl, traits::ConstU64};
 use sp_runtime::BuildStorage;
 
 type Block = frame_system::mocking::MockBlock<Test>;
@@ -21,7 +18,6 @@ impl frame_system::Config for Test {
 
 impl pallet_ringct::Config for Test {
     type RuntimeEvent = RuntimeEvent;
-    type RingSize = ConstU32<4>;
     type SpendableAge = ConstU64<10>;
     type CoinbaseMaturity = ConstU64<60>;
     type MinFeePerByte = ConstU64<1>;
@@ -38,7 +34,7 @@ pub fn new_test_ext() -> sp_io::TestExternalities {
 }
 
 /// Advance to `n`, running `on_finalize` / `on_initialize` so membership
-/// tree maintenance (PR-1) executes between blocks.
+/// tree maintenance executes between blocks.
 pub fn run_to_block(n: u64) {
     use frame_support::traits::Hooks;
     while System::block_number() < n {

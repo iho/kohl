@@ -14,6 +14,8 @@ How to run a **public Kohl node** that miners and other full nodes can dial.
 
 Miners and seeds **must use the same chain id and genesis**. Mismatched specs = different networks.
 
+All presets are **FCMP-only** (no Dual / CLSAG spend path). Host version matrix, genesis checklist, and re-genesis policy: **[fcmp-runbook.md](fcmp-runbook.md)**.
+
 > **Mainnet is a fair launch** (zero genesis supply). Whoever starts mining first is the start of that history. Coordinate a public “genesis moment” if you care about a shared start; the binary does not enforce a start time.
 
 ---

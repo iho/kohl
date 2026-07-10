@@ -52,7 +52,10 @@ fn pow_hasher() -> Arc<dyn Hasher + Send + Sync> {
 }
 
 /// Host functions available to the runtime: the standard Substrate set plus
-/// the RingCT verifiers (CLSAG / balance / range proof / value commitment).
+/// RingCT / FCMP verifiers (`verify_fcmp_v1`, balance, range proof, …).
+///
+/// Operators: see [`crate::fcmp_capability`] and `docs/fcmp-runbook.md` for the
+/// `spec_version` ↔ min node version ↔ host-fn matrix. Ship node before runtime.
 pub type HostFunctions = (
     sp_io::SubstrateHostFunctions,
     ringct_crypto::RingCtHostFunctions,
@@ -152,6 +155,10 @@ fn mining_inherent_data_providers(
 }
 
 pub fn new_partial(config: &Configuration) -> Result<Service, ServiceError> {
+    // PR-9: surface host/runtime skew expectations in the node journal before
+    // the first block is imported (see docs/fcmp-runbook.md).
+    crate::fcmp_capability::log_startup_capability();
+
     let telemetry = config
         .telemetry_endpoints
         .clone()

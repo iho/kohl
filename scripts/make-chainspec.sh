@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Export a Kohl chain spec and inject bootnode multiaddrs.
 #
+# All built-in chains are FCMP-only fair launch (no Dual / CLSAG era).
+# Host version matrix + genesis checklist: docs/fcmp-runbook.md
+#
 # Usage:
 #   ./scripts/make-chainspec.sh --chain kohl \
 #     --bootnode /ip4/203.0.113.10/tcp/30333/p2p/12D3KooW... \

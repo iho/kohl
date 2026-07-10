@@ -70,6 +70,12 @@ impl_opaque_keys! {
     pub struct SessionKeys {}
 }
 
+/// Runtime version (PR-10 mainnet-candidate freeze).
+///
+/// Bump `spec_version` when state transition rules change; bump
+/// `transaction_version` when extrinsic encoding changes. Keep the host
+/// matrix in `node/src/fcmp_capability.rs` and `docs/fcmp-mainnet-freeze.md`
+/// in sync.
 #[sp_version::runtime_version]
 pub const VERSION: RuntimeVersion = RuntimeVersion {
     spec_name: alloc::borrow::Cow::Borrowed("kohl"),
@@ -96,10 +102,10 @@ pub type Block = generic::Block<Header, UncheckedExtrinsic>;
 /// Transaction extension pipeline.
 ///
 /// RingCT transfers are **general** (unsigned) extrinsics authorized by
-/// `#[pallet::authorize]` via [`frame_system::AuthorizeCall`] — the CLSAG is
-/// the proof of authority. Coinbase is a bare inherent (`ensure_none`), not
-/// a general transaction. There is no fee-charging extension: fees live
-/// inside the RingCT balance equation.
+/// `#[pallet::authorize]` via [`frame_system::AuthorizeCall`] — the FCMP+SA+L
+/// proof (`verify_fcmp_v1`) is the proof of authority (PR-7/PR-10). Coinbase
+/// is a bare inherent (`ensure_none`), not a general transaction. There is no
+/// fee-charging extension: fees live inside the RingCT balance equation.
 pub type TxExtension = (
     frame_system::AuthorizeCall<Runtime>,
     frame_system::CheckNonZeroSender<Runtime>,
@@ -130,8 +136,8 @@ parameter_types! {
         Weight::from_parts(2u64 * WEIGHT_REF_TIME_PER_SECOND, u64::MAX),
         NORMAL_DISPATCH_RATIO,
     );
-    // Generous block length: RingCT transfers with 16-member rings + a
-    // Bulletproof are a few KiB each; keep the base cap conservative.
+    // ~300 KiB: FCMP0001 worst case (≤4 inputs × 12 KiB proofs + BP) fits with
+    // multi-tx headroom (docs/fcmp-mainnet-freeze.md). BLUEPRINT §9.5.
     pub RuntimeBlockLength: BlockLength = BlockLength::builder()
         .max_length(300 * 1024)
         .modify_max_length_for_class(DispatchClass::Normal, |m| *m = NORMAL_DISPATCH_RATIO * *m)
@@ -197,7 +203,6 @@ impl pallet_difficulty::Config for Runtime {
 
 impl pallet_ringct::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type RingSize = ConstU32<16>;
     type SpendableAge = ConstU32<10>;
     type CoinbaseMaturity = ConstU32<60>;
     type MinFeePerByte = ConstU64<1_000>;

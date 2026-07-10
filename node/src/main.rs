@@ -6,6 +6,7 @@ mod chain_spec;
 mod cli;
 mod command;
 mod dandelion;
+mod fcmp_capability;
 mod rpc;
 mod service;
 

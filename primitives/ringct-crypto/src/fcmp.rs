@@ -349,6 +349,15 @@ pub fn verify(
     if !public_inputs_well_formed(msg, membership_root, pseudo_commitment, key_image, proof) {
         return false;
     }
+    // Defense in depth (PR-11): reject non-canonical / identity points before
+    // CLSAG (pallet also checks; host must not accept garbage as "valid crypto").
+    let mut ki = [0u8; 32];
+    let mut cprime = [0u8; 32];
+    ki.copy_from_slice(key_image);
+    cprime.copy_from_slice(pseudo_commitment);
+    if !crate::native::is_valid_point(&ki) || !crate::native::is_valid_point(&cprime) {
+        return false;
+    }
     // D17: transparent paths are never valid.
     if looks_like_transparent_path_encoding(proof) {
         return false;
@@ -597,5 +606,49 @@ mod tests {
     fn root_matches_pallet_style_empty() {
         assert_eq!(root_from_leaves(&[]), merkle_empty_child());
         assert_ne!(empty_leaf_hash(), merkle_empty_child());
+    }
+
+    /// PR-11: host leaf/Merkle domains stay locked to ringct-primitives freeze.
+    #[test]
+    fn path_a_domains_match_primitives_freeze() {
+        use ringct_primitives::{
+            FCMP_EMPTY_LEAF_DOM, FCMP_LEAF_DOM, FCMP_MERKLE_DOM, FCMP_MERKLE_EMPTY_DOM,
+        };
+        assert_eq!(FCMP_LEAF_DOM, b"kohl/fcmp/leaf/v1");
+        assert_eq!(FCMP_EMPTY_LEAF_DOM, b"kohl/fcmp/leaf/empty/v1");
+        assert_eq!(FCMP_MERKLE_DOM, b"kohl/fcmp/merkle/v1");
+        assert_eq!(FCMP_MERKLE_EMPTY_DOM, b"kohl/fcmp/merkle/v1/empty");
+        // leaf_hash uses the same domain bytes as the pallet membership module.
+        let p = [7u8; 32];
+        let c = [8u8; 32];
+        let mut v = Vec::new();
+        v.extend_from_slice(FCMP_LEAF_DOM);
+        v.extend_from_slice(&p);
+        v.extend_from_slice(&c);
+        assert_eq!(leaf_hash(&p, &c), blake2_256(&v));
+        assert_eq!(empty_leaf_hash(), blake2_256(FCMP_EMPTY_LEAF_DOM));
+    }
+
+    #[test]
+    fn rejects_identity_key_image_and_pseudo() {
+        let msg = [5u8; 32];
+        let mask = [true, true];
+        let (root, witness, _) = build_tree_and_spend(2, &mask, 0, 3);
+        let res = prove(&msg, &witness).unwrap();
+        let id = [0u8; 32]; // compressed identity is not a valid non-identity point
+        assert!(!verify(
+            &msg,
+            &root,
+            &res.pseudo_commitment,
+            &id,
+            &res.proof
+        ));
+        assert!(!verify(&msg, &root, &id, &res.key_image, &res.proof));
+    }
+
+    #[test]
+    fn proof_tag_is_fcmp0001() {
+        assert_eq!(PROOF_TAG, b"FCMP0001");
+        assert_eq!(TRANSPARENT_PATH_DEBUG_TAG, b"TRPATH01");
     }
 }

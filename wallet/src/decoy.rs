@@ -14,8 +14,15 @@
 //!
 //! Using a seeded RNG keeps tests reproducible; the CLI passes OS entropy.
 
-use crate::RingMember;
 use std::collections::BTreeSet;
+
+/// Legacy decoy ring member (CLSAG-era sampler; unused by FCMP spends).
+#[derive(Clone, Debug)]
+pub struct RingMember {
+    pub global_index: u64,
+    pub one_time_key: [u8; 32],
+    pub commitment: [u8; 32],
+}
 
 /// Shape parameter for the age power-law weight `age^{-α}`.
 /// Higher α → stronger preference for recent outputs.

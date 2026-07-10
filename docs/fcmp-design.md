@@ -5,7 +5,7 @@
 | **Title** | Full-Chain Membership Proofs (FCMP) for kohl |
 | **Author** | kohl core (design draft) |
 | **Date** | 2026-07-10 |
-| **Status** | Draft (**rev 6 — pre-launch FCMP-only, no Dual**); PR-0…5 ✅ · **PR-6 ✅** |
+| **Status** | Draft (**rev 6 — pre-launch FCMP-only, no Dual**); PR-0…10 ✅ · **PR-11 ✅** (hardening + docs; external audit still recommended) |
 | **Launch posture** | **Not launched.** No mainnet history to preserve. No forward-compat Dual era. |
 | **Supersedes / relates** | `BLUEPRINT.md` §1.2–1.3, §1.6, §9.2–9.3; `GLOSSARY.md` FAQ (rings vs SNARK pools) |
 | **Prior art** | Monero FCMP++ (Kayaba / Luke Parker); Curve Trees (eprint 2022/756); Eagen divisors (eprint 2022/596); [fcmp-ringct](https://github.com/kayabaNerve/fcmp-ringct); [Monero FCMP blog](https://www.getmonero.org/2024/04/27/fcmps.html) |
@@ -841,6 +841,8 @@ Reject as end state.
 4. **Composition review memo** (external or independent internal) before mainnet genesis.
 5. CLSAG may run on **throwaway** devnets only; document that those chains are discarded.
 
+**PR-10 status:** encoding freeze + internal composition memo + automated soak/invariants recorded under [`fcmp-mainnet-freeze.md`](fcmp-mainnet-freeze.md). External audit → PR-11.
+
 ### Residual privacy limits (honest)
 
 - Network layer (Dandelion++/Tor) still required.
@@ -863,9 +865,11 @@ Reject as end state.
 
 ### Operator runbook bullets (HF / host skew)
 
+Full write-up: [`fcmp-runbook.md`](fcmp-runbook.md) (PR-9). Code matrix: `node/src/fcmp_capability.rs`.
+
 1. Ship **node binary** including new host functions **before** runtime that calls them.
 2. Publish matrix: `spec_version` ↔ minimum node version ↔ required host fn set.
-3. Building (dev): tree maintenance only; CLSAG spends still OK on **throwaway** chains.
+3. Building (dev): tree maintenance only; CLSAG spends still OK on **throwaway** chains (historical; production path is FcmpOnly after PR-7).
 4. FcmpOnly (dev/test): flip spend path; **delete or disable CLSAG**; monitor `fcmp_verify_fail` and weight utilization.
 5. Mainnet: **fresh genesis** FcmpOnly after D14 checklist (review + weights + soak).
 6. Pre-launch emergency: **re-genesis** or revert git — not a Dual HF. Post-launch host verify still cannot be silent-patched without node upgrade.
@@ -982,35 +986,47 @@ Order is dependency order. **No Dual.** **FcmpOnly soak / mainnet only after wei
 - **Deps:** PR-5c
 - **Description:** Engineering budgets: FCMP verify ≤ **25 ms · inputs · (n/64)** (D2); tree maintain O(slots). PR-7 wires extrinsic weights.
 
-### PR-7 — FCMP-only transfer (delete CLSAG spend)
+### PR-7 — FCMP-only transfer (delete CLSAG spend) ✅
 
 - **Title:** `ringct: FCMP transfer replaces CLSAG`
-- **Components:** new tx types, verify pipeline, authorize, **remove `RingInput` / decoy requirements from production path**
+- **Components:** `TransferTx` v4 + `FcmpInput`; `verify_fcmp_v1` dispatch; root window; wallet FCMP builder; `fcmp_mode=2`
 - **Deps:** PR-1, PR-5c, PR-6
-- **Description:** Mode `FcmpOnly` for soak chains; shared KI set; no Dual authorize branch.
+- **Description:** CLSAG rings removed from production spends; full mature-set FCMP0001; shared KI set.
 
-### PR-8 — Wallet FCMP-only
+### PR-8 — Wallet FCMP-only ✅
 
 - **Title:** `wallet: FCMP builder; retire decoy sampler for production`
+- **Components:** `membership::MembershipCache`, frontier snapshot, fee estimate by tree size, `legacy-decoy` feature (off by default)
 - **Deps:** PR-3, PR-5c, PR-7
-- **Description:** Witness cache + reorg resync; CLSAG builder behind test/dev feature only.
+- **Description:** Witness cache + reorg resync; decoy sampler not in production path.
 
-### PR-9 — Node / chainspec / runbook
+### PR-9 — Node / chainspec / runbook ✅
 
 - **Title:** `node: FCMP host capability and mainnet genesis checklist`
 - **Deps:** PR-4, PR-7
-- **Description:** Host skew checks; **FCMP-only genesis** template; no Dual height matrix.
+- **Components:** `node/src/fcmp_capability.rs` (matrix + startup log); `docs/fcmp-runbook.md`; `chainspecs/README.md` + `chain_spec` FCMP-only notes
+- **Description:** Host skew matrix (`spec_version` ↔ min node ↔ host fns); **FCMP-only genesis** checklist; **no Dual** height matrix; node logs capability on `new_partial`.
 
-### PR-10 — Mainnet freeze + genesis
+### PR-10 — Mainnet freeze + genesis ✅
 
 - **Title:** `runtime: mainnet FcmpOnly genesis after D14 artifacts`
 - **Deps:** PR-7–PR-9; **named artifacts:** composition review memo, FCMP-only soak report, weight CI green, invariant suite
-- **Description:** Encoding freeze; CLSAG not in mainnet runtime; re-genesis policy documented if any public testnet had rings.
+- **Components:**
+  - [`fcmp-mainnet-freeze.md`](fcmp-mainnet-freeze.md) — encoding inventory + re-genesis policy
+  - [`fcmp-composition-memo.md`](fcmp-composition-memo.md) — internal D14 composition review (FCMP0001)
+  - [`fcmp-soak-report.md`](fcmp-soak-report.md) — automated soak + live procedure
+  - `pallets/ringct/src/mainnet_invariants.rs` + primitives freeze snapshot; CI
+- **Description:** Encoding freeze for mainnet-candidate FCMP0001; CLSAG transfer path absent; **no Dual**. External audit and Path B remain PR-11 / research.
 
-### PR-11 — Post-audit hardening
+### PR-11 — Post-audit hardening ✅
 
 - **Title:** `fcmp: audit fixes, fuzz, docs (BLUEPRINT/GLOSSARY rings → FCMP)`
-- **Deps:** PR-10 + audit reports
+- **Deps:** PR-10 (+ composition memo handoff; external audit reports optional / ongoing)
+- **Components:**
+  - [`fcmp-audit-hardening.md`](fcmp-audit-hardening.md) — checklist close-out + residual risks
+  - `fuzz/fuzz_targets/fcmp_verify.rs`; host point hygiene in `fcmp::verify`
+  - Domain parity tests (pallet ↔ host); BLUEPRINT / GLOSSARY / README FCMP-only
+- **Description:** Internal hardening pass; FCMP fuzz surface; docs no longer describe ring-16 as production. Independent external audit remains recommended before social mainnet.
 
 ```mermaid
 flowchart LR

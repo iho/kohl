@@ -21,18 +21,21 @@ pub const EMISSION_SHIFT: u32 = 19;
 /// Target block time in milliseconds (RandomX PoW target, Phase 4).
 pub const TARGET_BLOCK_TIME_MS: u64 = 60_000;
 
-/// Maximum inputs per transfer.
+/// Maximum inputs per transfer (legacy alias ceiling; production uses
+/// [`MAX_FCMP_INPUTS`]).
 pub const MAX_INPUTS: u32 = 8;
 
 /// Maximum outputs per transfer (and per coinbase).
 pub const MAX_OUTPUTS: u32 = 8;
 
-/// Maximum ring size the type system admits. The *required* ring size is a
-/// runtime `Config` constant (16 on the production chain) and must be ≤ this.
+/// Historical CLSAG ring-size ceiling. Production spends are FCMP-only
+/// (PR-7/PR-10); FCMP0001 SA+L may still use CLSAG over up to
+/// [`MAX_FCMP_ANON_SET`] members inside the host. Not a wallet ring parameter.
 pub const MAX_RING_SIZE: u32 = 16;
 
-/// Maximum encoded size of a CLSAG signature:
+/// Maximum encoded size of a CLSAG signature at [`MAX_RING_SIZE`]:
 /// c0 (32) + one scalar per ring member (32·n) + auxiliary key image D (32).
+/// FCMP0001 uses a larger host-side ring bound (`MAX_FCMP_ANON_SET`).
 pub const CLSAG_MAX_BYTES: u32 = 32 * (MAX_RING_SIZE + 2);
 
 /// Maximum encoded size of an aggregated range proof.
@@ -67,14 +70,19 @@ pub const FCMP_MERKLE_DOM: &[u8] = b"kohl/fcmp/merkle/v1";
 /// Missing child beyond `TreeSlots` (depth padding).
 pub const FCMP_MERKLE_EMPTY_DOM: &[u8] = b"kohl/fcmp/merkle/v1/empty";
 
-/// Interim max FCMP inputs per tx (design D15). Revisit after PR-5 benches.
+// ---- Mainnet encoding freeze (PR-10) ------------------------------------
+// Values below are frozen for the FCMP0001 mainnet-candidate. Changing them
+// is a hard fork — update docs/fcmp-mainnet-freeze.md and bump runtime
+// versions in the same change. See `tests::mainnet_encoding_freeze_snapshot`.
+
+/// Max FCMP inputs per tx (design D15 / PR-10 freeze).
 pub const MAX_FCMP_INPUTS: u32 = 4;
 
-/// Provisional max FCMP proof size per input (12 KiB; design D15).
+/// Max FCMP proof size per input (12 KiB; design D15 / PR-10 freeze).
 /// Hard D2 gate is 16 KiB; keep headroom under 300 KiB blocks.
 pub const MAX_FCMP_PROOF_BYTES: u32 = 12_288;
 
-/// Interim max mature-set size for PR-5 full-set CLSAG under the Merkle root.
+/// Max mature-set size for FCMP0001 full-set membership under the Merkle root.
 /// Proof packs digests + ring + CLSAG; 64 fits in [`MAX_FCMP_PROOF_BYTES`].
 /// Larger trees need Curve Trees / Path B (or a later IPA composition).
 pub const MAX_FCMP_ANON_SET: u32 = 64;
@@ -96,6 +104,26 @@ pub const fn block_reward(emitted: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PR-10 freeze snapshot — fail loudly if consensus caps drift unsigned.
+    #[test]
+    fn mainnet_encoding_freeze_snapshot() {
+        assert_eq!(MAX_FCMP_INPUTS, 4);
+        assert_eq!(MAX_FCMP_PROOF_BYTES, 12_288);
+        assert_eq!(MAX_FCMP_ANON_SET, 64);
+        assert_eq!(MAX_OUTPUTS, 8);
+        assert_eq!(MAX_RANGE_PROOF_BYTES, 1024);
+        assert_eq!(MAX_PAYLOAD_BYTES, 80);
+        assert_eq!(FCMP_ADMIT_MAX_LEAVES_PER_BLOCK, 64);
+        assert_eq!(FCMP_GROW_CATCHUP_MAX_PER_BLOCK, 64);
+        assert_eq!(FCMP_ROOT_MAX_AGE_BLOCKS, 64);
+        assert_eq!(FCMP_LEAF_DOM, b"kohl/fcmp/leaf/v1");
+        assert_eq!(FCMP_EMPTY_LEAF_DOM, b"kohl/fcmp/leaf/empty/v1");
+        assert_eq!(FCMP_MERKLE_DOM, b"kohl/fcmp/merkle/v1");
+        assert_eq!(FCMP_MERKLE_EMPTY_DOM, b"kohl/fcmp/merkle/v1/empty");
+        assert_eq!(ATOMIC_UNITS, 100_000_000);
+        assert_eq!(TARGET_BLOCK_TIME_MS, 60_000);
+    }
 
     #[test]
     fn first_reward_is_sane() {

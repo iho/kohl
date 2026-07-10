@@ -1,6 +1,6 @@
 [package]
 name = "kohl-wallet"
-description = "Wallet for the kohl chain: scan for owned outputs and build RingCT transfers"
+description = "Wallet for the kohl chain: scan for owned outputs and build FCMP transfers"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -31,3 +31,8 @@ ringct-crypto = { workspace = true, features = ["std"] }
 ringct-primitives = { workspace = true, features = ["std"] }
 pallet-ringct = { workspace = true, features = ["std"] }
 kohl-runtime = { workspace = true, features = ["std"] }
+
+[features]
+default = []
+# Optional Monero-style decoy sampler (not used by FCMP production path).
+legacy-decoy = []
